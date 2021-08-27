@@ -1,14 +1,21 @@
 Mikino is a (relatively) simple induction and BMC engine.
 
+*"Mikino"* does **not** mean *cinema*. It is a contraction of *"mini"* and *"kinō"* (帰納:
+induction, recursion). It is a significantly simpler version of the now defunct [kino] `k`-induction
+engine on transition systems.
+
 - [SMT Solver (Z3)](#smt-solver-z3)
 - [Building From Sources](#building-from-sources)
 - [Transition Systems](#transition-systems)
+- [Dependencies](#dependencies)
 - [License](#license)
 
 
-You can run in demo mode with `mikino demo demo.mkn`. This will write a heavily commented example
-system in `demo.mkn`. There is a discussion on transition systems [below](#transition-systems) that
-discusses this exact system.
+You can run mikino in demo mode with `mikino demo demo.mkn`. This will write a heavily commented
+example system in `demo.mkn`. There is a discussion on transition systems
+[below](#transition-systems) that discusses this exact system.
+
+Running `mikino help` is also probably a good idea.
 
 Note that mikino files are designed to work well with Rust syntax highlighting.
 
@@ -115,6 +122,18 @@ state of the sequence falsifies the PO.
 > ```
 
 
+# Dependencies
+
+Mikino relies on the following stellar libraries:
+
+- [`ansi_term`](https://crates.io/crates/ansi_term)
+- [`atty`](https://crates.io/crates/atty)
+- [`clap`](https://crates.io/crates/clap)
+- [`error-chain`](https://crates.io/crates/error-chain)
+- [`num`](https://crates.io/crates/num)
+- [`rsmt2`](https://crates.io/crates/rsmt2)
+
+
 # License
 
 Mikino is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
@@ -127,3 +146,5 @@ See [LICENSE-APACHE](./LICENSE-APACHE) and [LICENSE-MIT](./LICENSE-MIT) for deta
 (Z3's wiki on github)
 [Z3 release page]: https://github.com/Z3Prover/z3/releases
 (Z3's release page on github)
+[kino]: https://github.com/kino-mc/kino
+(kino on github)
