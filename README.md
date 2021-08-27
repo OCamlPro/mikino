@@ -1,13 +1,37 @@
 Mikino is a (relatively) simple induction and BMC engine.
 
+- [SMT Solver (Z3)](#smt-solver-z3)
+- [Building From Sources](#building-from-sources)
+- [Transition Systems](#transition-systems)
+- [License](#license)
+
+
 You can run in demo mode with `mikino demo demo.mkn`. This will write a heavily commented example
-system in `demo.mkn`. Mikino files are designed to work well with Rust syntax highlighting.
+system in `demo.mkn`. There is a discussion on transition systems [below](#transition-systems) that
+discusses this exact system.
 
-# License
+Note that mikino files are designed to work well with Rust syntax highlighting.
 
-Mikino is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
 
-See [LICENSE-APACHE](./LICENSE-APACHE) and [LICENSE-MIT](./LICENSE-MIT) for details.
+# SMT Solver (Z3)
+
+Mikino requires an [SMT solver] to run induction (and BMC). More precisely, it requires [Z3] which
+you can download directly from the [Z3 release page]. You must either
+
+- make sure the Z3 binary is in your path, and is called `z3`, or
+- use mikino's `--z3_cmd` to specify how to call it, for instance:
+    - `mikino --z3_cmd my_z3 ...` if `my_z3` is in your path, or
+    - `mikino --z3_cmd ./path/to/my_z3 ...` if `path/to/my_z3` is where the Z3 binary is.
+
+
+# Building From Sources
+
+```bash
+> cargo build --release
+> ./target/release/mikino --version
+mikino 0.1.0
+```
+
 
 # Transition Systems
 
@@ -89,3 +113,17 @@ state of the sequence falsifies the PO.
 > | cnt: 7
 > | inc: true
 > ```
+
+
+# License
+
+Mikino is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
+
+See [LICENSE-APACHE](./LICENSE-APACHE) and [LICENSE-MIT](./LICENSE-MIT) for details.
+
+[SMT solver]: https://en.wikipedia.org/wiki/Satisfiability_modulo_theories
+(SMT on wikipedia)
+[Z3]: https://github.com/Z3Prover/z3/wiki
+(Z3's wiki on github)
+[Z3 release page]: https://github.com/Z3Prover/z3/releases
+(Z3's release page on github)
