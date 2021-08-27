@@ -3,6 +3,13 @@ name = "mikino_api"
 version = "0.1.0"
 authors = ["Adrien Champion <adrien.champion@ocamlpro.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = "A simple induction and BMC engine"
+homepage = "https://github.com/AdrienChampion/mikino"
+repository = "https://github.com/AdrienChampion/mikino"
+keywords = ["smt", "satisfiability", "verification", "induction"]
+categories = ["science"]
 
 [[bin]]
 path = "src/main.rs"

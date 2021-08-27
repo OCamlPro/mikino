@@ -1,8 +1,9 @@
-Mikino is a (relatively) simple induction and BMC engine.
+Mikino is a (relatively) simple induction and BMC engine. Its goal is to serve as a simple yet
+interesting tool for those interested in formal verification, especially SMT-based induction.
 
-*"Mikino"* does **not** mean *cinema*. It is a contraction of *"mini"* and *"kinō"* (帰納:
-induction, recursion). It is a significantly simpler version of the now defunct [kino] `k`-induction
-engine on transition systems.
+> *"Mikino"* does **not** mean *cinema*. It is a contraction of *"mini"* and *"kinō"* (帰納:
+> induction, recursion). It is a significantly simpler version of the now defunct [kino]
+> `k`-induction engine on transition systems.
 
 - [SMT Solver (Z3)](#smt-solver-z3)
 - [Building From Sources](#building-from-sources)
