@@ -8,6 +8,5 @@ pub mod prelude;
 
 pub mod check;
 pub mod expr;
-pub mod mode;
 pub mod parse;
 pub mod trans;
