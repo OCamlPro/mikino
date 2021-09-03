@@ -7,6 +7,7 @@ pub use std::{
     ops::{Deref, DerefMut},
 };
 
+pub use either::Either;
 pub use error_chain::bail;
 pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, Zero};
 pub use rsmt2::SmtRes;

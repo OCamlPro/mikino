@@ -3,7 +3,7 @@
 crate::prelude!();
 
 use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
-use rsmt2::parse::{IdentParser, ModelParser};
+use rsmt2::parse::IdentParser;
 use trans::{Decls, Sys};
 
 /// Parses its input text.
@@ -803,25 +803,6 @@ impl<'txt> Parser<'txt> {
 /// SMT2 stateless var and value parser.
 #[derive(Debug, Clone, Copy)]
 pub struct Smt2Parser;
-
-impl<'a> ModelParser<Var, Typ, Cst, &'a str> for Smt2Parser {
-    fn parse_value(self, input: &'a str, _: &Var, _: &[(Var, Typ)], _: &Typ) -> SmtRes<Cst> {
-        let mut parser = Parser::new(input);
-        match parser.try_cst() {
-            Ok(Some(cst)) => Ok(cst),
-            Ok(None) | Err(_) => bail!("unexpected constant string `{}`", input),
-        }
-    }
-}
-impl<'a> ModelParser<SVar, Typ, Cst, &'a str> for Smt2Parser {
-    fn parse_value(self, input: &'a str, _: &SVar, _: &[(SVar, Typ)], _: &Typ) -> SmtRes<Cst> {
-        let mut parser = Parser::new(input);
-        match parser.try_cst() {
-            Ok(Some(cst)) => Ok(cst),
-            Ok(None) | Err(_) => bail!("unexpected constant string `{}`", input),
-        }
-    }
-}
 impl<'a> IdentParser<Var, Typ, &'a str> for Smt2Parser {
     fn parse_ident(self, input: &'a str) -> SmtRes<Var> {
         let mut parser = Parser::new(input);
