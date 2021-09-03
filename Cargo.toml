@@ -1,6 +1,6 @@
 [package]
 name = "mikino_api"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Adrien Champion <adrien.champion@ocamlpro.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -20,3 +20,4 @@ force-color = []
 error-chain = "^0.12"
 num = "^0.4"
 rsmt2 = "^0.12"
+either = "^1.6"

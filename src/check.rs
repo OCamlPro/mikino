@@ -217,7 +217,21 @@ impl<'sys> InternalChecker<'sys> {
         z3_cmd: impl Into<String>,
         tee: Option<impl AsRef<str>>,
     ) -> Res<Self> {
-        let conf = SmtConf::z3(z3_cmd);
+        let z3_cmd = z3_cmd.into();
+        let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
+        let z3_cmd = split_cmd
+            .next()
+            .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
+            .trim();
+        let mut conf = SmtConf::z3(z3_cmd);
+
+        for opt in split_cmd {
+            let opt = opt.trim();
+            if !opt.is_empty() {
+                conf.option(opt);
+            }
+        }
+
         let mut solver = conf
             .spawn(cexs::SmtParser)
             .chain_err(|| "while spawning z3 solver")?;
