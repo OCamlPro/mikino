@@ -6,6 +6,272 @@ use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
 use trans::{Decls, Sys};
 
+pub mod kw;
+
+/// Yields `true` if `ident` is a keyword.
+pub fn is_kw(ident: impl AsRef<str>) -> bool {
+    kw::all.contains(ident.as_ref())
+}
+/// Fails if `ident` is a keyword.
+pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
+    let ident = ident.as_ref();
+    if is_kw(ident) {
+        Err(format!("illegal use of keyword `{}`", ident))
+    } else {
+        Ok(())
+    }
+}
+
+pub type PegResult<'input, T> =
+    Result<T, peg::error::ParseError<<str as peg::Parse>::PositionRepr>>;
+
+peg::parser! {
+    pub grammar peg_parser(decls: &Decls) for str {
+        /// Whitespace.
+        pub rule whitespace() = quiet! {
+            [ ' ' | '\n' | '\t' ]
+        }
+        /// Comment.
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::comment};
+        /// let d = &Decls::new();
+        ///
+        /// // Recognizes rust-style comments.
+        /// assert_eq!(comment("// some comment\n", d), Ok(()));
+        /// assert_eq!(comment("// some comment", d), Ok(()));
+        ///
+        /// // Rejects rust-style outer/inner comments.
+        /// assert_eq!(
+        ///     comment("/// outer doc comment", d).unwrap_err().to_string(),
+        ///     "error at 1:1: expected non-documentation comment",
+        /// );
+        /// assert_eq!(
+        ///     comment("//! outer doc comment", d).unwrap_err().to_string(),
+        ///     "error at 1:1: expected non-documentation comment",
+        /// );
+        /// ```
+        pub rule comment() = quiet! {
+            // Rust-style.
+            "//"
+            // Do not match inner/outer documentation.
+            [^ '/' | '!' | '\n' ]*
+            // Newline or EOI.
+            ("\n" / ![_])
+        }
+        / expected!("non-documentation comment")
+
+        /// Whitespace or comment.
+        rule _() = ( whitespace() / comment() )*
+
+        /// Ident parsing.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::ident};
+        /// let d = &Decls::new();
+        ///
+        /// // Regular idents are okay.
+        /// assert_eq!(ident("v_1", d), Ok("v_1"));
+        /// assert_eq!(ident("my_var_7", d), Ok("my_var_7"));
+        ///
+        /// // Cannot start with a digit.
+        /// assert_eq!(
+        ///     ident("0_illegal", d).unwrap_err().to_string(),
+        ///     "error at 1:1: expected quoted or unquoted identifier",
+        /// );
+        ///
+        /// // Cannot have weird SMT-LIB characters in unquoted identifiers.
+        /// let not_legal = [
+        ///     '~', '!', '@', '$', '%', '^', '&', '*',
+        ///     '-', '+', '=', '<', '>', '.', '?', '/',
+        /// ];
+        /// let legal_ident = "v_";
+        /// assert_eq!(ident(legal_ident, d), Ok(legal_ident));
+        /// for c in &not_legal {
+        ///     let illegal = format!("{}{}", legal_ident, c);
+        ///     assert!(ident(&illegal, d).is_err());
+        /// }
+        ///
+        /// // Quoted idents can contain anything but '|' and '\'.
+        /// let id = "|\n + ~ ! so free - = <> 😸 /? @^  \n\n /// |";
+        /// assert_eq!(ident(id, d), Ok(id));
+        /// ```
+        pub rule ident() -> &'input str
+        = quiet! {
+            $(
+                // Unquoted ident, notice it's a bit different from SMT-LIB.
+                [ 'a'..='z' | 'A'..='Z' | '_' ]
+                [ 'a'..='z' | 'A'..='Z' | '_' | '0'..='9' ]*
+            )
+            // Quoted ident.
+            / $( "|" [^ '|' | '\\']* "|" )
+        }
+        // Error message.
+        / expected!("quoted or unquoted identifier")
+
+
+        /// Parses boolean constants.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::bool};
+        /// let d = &Decls::new();
+        ///
+        /// assert!(bool("true", d).unwrap());
+        /// assert!(bool("⊤", d).unwrap());
+        /// assert!(!bool("false", d).unwrap());
+        /// assert!(!bool("⊥", d).unwrap());
+        /// ```
+        pub rule bool() -> bool
+        = ("true" / "⊤") { true }
+        / ("false" / "⊥") { false }
+
+        /// Recognizes numbers: `0` and `[1-9][0-9]*`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::number};
+        /// let d = &Decls::new();
+        ///
+        /// let n = "0";
+        /// assert_eq!(number(n, d), Ok(n));
+        /// let n = "72054324";
+        /// assert_eq!(number(n, d), Ok(n));
+        pub rule number() -> &'input str
+        = $("0" / ['1'..='9']['0'..='9']*)
+        /// Same as [`number`] but generates an [`Int`].
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{prelude::Int, trans::Decls, parse::peg_parser::int_number};
+        /// let d = &Decls::new();
+        ///
+        /// let n = 0;
+        /// assert_eq!(int_number(&n.to_string(), d), Ok(Int::from(n)));
+        /// let n = 72054324;
+        /// assert_eq!(int_number(&n.to_string(), d), Ok(Int::from(n)));
+        pub rule int_number() -> Int
+        = digits:number() {?
+            Int::parse_bytes(digits.as_bytes(), 10).ok_or("illegal unsigned integer")
+        }
+
+        /// Parses an unsigned [`Int`], cannot be followed by a `.`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::uint, prelude::Int};
+        /// let d = &Decls::new();
+        ///
+        /// let n = 0;
+        /// assert_eq!(uint(&n.to_string(), d), Ok(Int::from(n)));
+        /// let n = 72054324;
+        /// assert_eq!(uint(&n.to_string(), d), Ok(Int::from(n)));
+        ///
+        /// // Cannot be followed by a `.`.
+        /// let n = "72054324.";
+        /// assert_eq!(
+        ///     uint(n, d).unwrap_err().to_string(),
+        ///     "error at 1:1: expected integer"
+        /// );
+        /// ```
+        pub rule uint() -> Int
+        = quiet! {
+            res:int_number() !['.'] { res }
+        }
+        / expected!("integer")
+
+
+        /// Parses an unsigned [`Int`], cannot be followed by a `.`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{trans::Decls, parse::peg_parser::decimal, prelude::{Int, Rat}};
+        /// let d = &Decls::new();
+        ///
+        /// let n = 0.0;
+        /// # println!("{:.0}.", n);
+        /// assert_eq!(decimal(&format!("{:.0}.", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// # println!("{:.1}", n);
+        /// assert_eq!(decimal(&format!("{:.1}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// # println!("{:.7}", n);
+        /// assert_eq!(decimal(&format!("{:.7}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// let n = 546205420374.0;
+        /// # println!("{:.0}.", n);
+        /// assert_eq!(decimal(&format!("{:.0}.", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// # println!("{:.1}", n);
+        /// assert_eq!(decimal(&format!("{:.1}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// # println!("{:.7}", n);
+        /// assert_eq!(decimal(&format!("{:.7}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// let n = 72054324.54205;
+        /// # println!("{}", n);
+        /// assert_eq!(
+        ///     decimal(&format!("{}", n), d),
+        ///     Ok(Rat::new((7205432454205 as u64).into(), 100000.into())),
+        /// );
+        /// # println!("{}00000000", n);
+        /// assert_eq!(
+        ///     decimal(&format!("{}00000000", n), d),
+        ///     Ok(Rat::new((7205432454205 as u64).into(), 100000.into())),
+        /// );
+        /// ```
+        pub rule decimal() -> Rat
+        = quiet! {
+            n:int_number() "." d:$(['0'..='9']*) {?
+                let mut numer = n;
+                let mut denom = Int::one();
+                if !d.is_empty() {
+                    let d_len = d.len();
+                    let d = Int::parse_bytes(d.as_bytes(), 10).ok_or("illegal decimal")?;
+                    for _ in 0..d_len {
+                        numer = numer * 10;
+                        denom = denom * 10;
+                    }
+                    numer = numer + d;
+                }
+                let rat = Rat::new(numer, denom);
+
+                Ok(rat)
+            }
+        }
+        / expected!("decimal number")
+
+        /// Parses stateless variables.
+        pub rule var() -> Var
+        = id:ident() {?
+            decls.get_var(id).ok_or("unknown variable")
+        }
+
+        /// Parses variables.
+        pub rule svar() -> SVar
+        = var:var() primed:$("'")? {
+            SVar::new(var, primed.is_some())
+        }
+
+        /// Parses polymorphic expressions.
+        rule pexpr<V>(
+            parse_var: rule<V>
+        ) -> PExpr<V>
+        = var:parse_var() {
+            PExpr::new_var(var)
+        }
+
+        /// Parses stateless expressions.
+        pub rule expr() -> Expr
+        = pexpr(<var()>)
+
+        /// Parses stateful expressions.
+        pub rule sexpr() -> SExpr
+        = pexpr(<svar()>)
+    }
+}
+
 /// Parses its input text.
 pub struct Parser<'txt> {
     /// Text to parse.
@@ -58,7 +324,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::Parser;
+    /// # use mikino_api::{trans::Decls, parse::Parser};
     /// let mut parser = Parser::new("\nsome text\n\t\th");
     /// let (line, col, row) = parser.pretty_pos(13).unwrap();
     /// # println!("line: `{}`, col: {}, row: {}", line, col, row);
@@ -109,7 +375,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(|_| false, true);
@@ -125,7 +391,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -140,7 +406,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff\non several\n// lines";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -167,7 +433,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = " \n\n  \r token";
     /// let mut parser = Parser::new(txt);
     /// parser.ws();
@@ -193,7 +459,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "// a single line comment\n  some more stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.cmt();
@@ -217,7 +483,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "  \n  // A comment // nested\n   \r // comment\n  some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.ws_cmt();
@@ -241,7 +507,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -276,7 +542,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// assert!(parser.try_tag("some"));
@@ -305,7 +571,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// assert!(parser.tag("some").is_ok());
@@ -327,7 +593,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "my_identifier 470not_an_identifier legal_id";
     /// let mut parser = Parser::new(txt);
     /// assert_eq!(parser.try_id().unwrap(), "my_identifier");
@@ -365,7 +631,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "integer: 72 and more tokens";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -418,7 +684,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "integer: (/ 72 11) and more tokens";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -488,7 +754,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some noise:true   // comments\nfalse";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -518,7 +784,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// # use mikino_api::expr::*;
     /// let txt = "7405,(/ 7 103),false";
     /// let mut parser = Parser::new(txt);

@@ -260,6 +260,10 @@ pub struct SVar {
     nxt: bool,
 }
 impl SVar {
+    /// State variable constructor with a `next` flag.
+    pub fn new(var: Var, nxt: bool) -> Self {
+        Self { var, nxt }
+    }
     /// Constructor for next state variables.
     ///
     /// # Examples
@@ -273,7 +277,7 @@ impl SVar {
     /// assert_eq!(svar.typ(), Typ::Bool);
     /// ```
     pub fn new_next(var: Var) -> Self {
-        Self { var, nxt: true }
+        Self::new(var, true)
     }
 
     /// Constructor for current state variables.
@@ -289,7 +293,7 @@ impl SVar {
     /// assert_eq!(svar.typ(), Typ::Bool);
     /// ```
     pub fn new_curr(var: Var) -> Self {
-        Self { var, nxt: false }
+        Self::new(var, false)
     }
 
     /// True if the state variable is a next state variable.

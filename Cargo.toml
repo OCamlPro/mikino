@@ -19,5 +19,7 @@ force-color = []
 [dependencies]
 error-chain = "^0.12"
 num = "^0.4"
-rsmt2 = "^0.12"
+rsmt2 = "^0.14"
 either = "^1.6"
+peg = "^0.7"
+lazy_static = "^1.4"

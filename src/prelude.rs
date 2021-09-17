@@ -1,6 +1,6 @@
 //! Common imports throughout this project.
 
-pub use std::{
+pub(crate) use std::{
     collections::{BTreeMap as Map, BTreeSet as Set},
     fmt,
     io::Write,
@@ -9,7 +9,7 @@ pub use std::{
 
 pub use either::Either;
 pub use error_chain::bail;
-pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, Zero};
+pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
 pub use rsmt2::SmtRes;
 
 pub use crate::{check, expr, parse, trans};
