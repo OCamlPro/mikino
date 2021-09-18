@@ -254,6 +254,15 @@ peg::parser! {
             SVar::new(var, primed.is_some())
         }
 
+        // /// Parses operator applications.
+        // rule app() -> SExpr
+        // = quiet! {
+        //     precedence! {
+
+        //     }
+        // }
+        // / expected!("operator application")
+
         /// Parses polymorphic expressions.
         rule pexpr<V>(
             parse_var: rule<V>
@@ -930,7 +939,8 @@ impl<'txt> Parser<'txt> {
 
                 if self.try_tag(")") {
                     self.ws_cmt();
-                    expr = PExpr::new_op(op, args);
+                    expr = PExpr::new_op(op, args)
+                        .map_err(|e| Error::from(self.fail(e.to_string())))?;
                     continue 'go_up_stack;
                 } else {
                     stack.push((op, args));

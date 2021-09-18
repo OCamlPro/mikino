@@ -12,7 +12,11 @@ pub use error_chain::bail;
 pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
 pub use rsmt2::SmtRes;
 
-pub use crate::{check, expr, parse, trans};
+pub use crate::{
+    check,
+    expr::{self, HasTyp},
+    parse, trans,
+};
 
 /// Step index.
 ///
