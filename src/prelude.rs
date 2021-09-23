@@ -13,7 +13,7 @@ pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
 pub use rsmt2::SmtRes;
 
 pub use crate::{
-    check,
+    build_decls, build_expr, build_trans, build_typ, check,
     expr::{self, HasTyp},
     parse, trans,
 };

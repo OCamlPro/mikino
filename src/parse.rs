@@ -6,7 +6,10 @@ use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
 use trans::{Decls, Sys};
 
+mod ast;
 pub mod kw;
+
+pub use ast::*;
 
 /// Yields `true` if `ident` is a keyword.
 pub fn is_kw(ident: impl AsRef<str>) -> bool {
@@ -22,11 +25,8 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
     }
 }
 
-pub type PegResult<'input, T> =
-    Result<T, peg::error::ParseError<<str as peg::Parse>::PositionRepr>>;
-
 peg::parser! {
-    pub grammar peg_parser(decls: &Decls) for str {
+    pub grammar rules() for str {
         /// Whitespace.
         pub rule whitespace() = quiet! {
             [ ' ' | '\n' | '\t' ]
@@ -34,20 +34,19 @@ peg::parser! {
         /// Comment.
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::comment};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::comment};
         ///
         /// // Recognizes rust-style comments.
-        /// assert_eq!(comment("// some comment\n", d), Ok(()));
-        /// assert_eq!(comment("// some comment", d), Ok(()));
+        /// assert_eq!(comment("// some comment\n"), Ok(()));
+        /// assert_eq!(comment("// some comment"), Ok(()));
         ///
         /// // Rejects rust-style outer/inner comments.
         /// assert_eq!(
-        ///     comment("/// outer doc comment", d).unwrap_err().to_string(),
+        ///     comment("/// outer doc comment").unwrap_err().to_string(),
         ///     "error at 1:1: expected non-documentation comment",
         /// );
         /// assert_eq!(
-        ///     comment("//! outer doc comment", d).unwrap_err().to_string(),
+        ///     comment("//! outer doc comment").unwrap_err().to_string(),
         ///     "error at 1:1: expected non-documentation comment",
         /// );
         /// ```
@@ -62,23 +61,22 @@ peg::parser! {
         / expected!("non-documentation comment")
 
         /// Whitespace or comment.
-        rule _() = ( whitespace() / comment() )*
+        rule _() = quiet! { ( whitespace() / comment() )* }
 
         /// Ident parsing.
         ///
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::ident};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::ident};
         ///
         /// // Regular idents are okay.
-        /// assert_eq!(ident("v_1", d), Ok("v_1"));
-        /// assert_eq!(ident("my_var_7", d), Ok("my_var_7"));
+        /// assert_eq!(*ident("v_1").unwrap(), "v_1");
+        /// assert_eq!(*ident("my_var_7").unwrap(), "my_var_7");
         ///
         /// // Cannot start with a digit.
         /// assert_eq!(
-        ///     ident("0_illegal", d).unwrap_err().to_string(),
+        ///     ident("0_illegal").unwrap_err().to_string(),
         ///     "error at 1:1: expected quoted or unquoted identifier",
         /// );
         ///
@@ -88,25 +86,42 @@ peg::parser! {
         ///     '-', '+', '=', '<', '>', '.', '?', '/',
         /// ];
         /// let legal_ident = "v_";
-        /// assert_eq!(ident(legal_ident, d), Ok(legal_ident));
+        /// assert_eq!(*ident(legal_ident).unwrap(), legal_ident);
         /// for c in &not_legal {
         ///     let illegal = format!("{}{}", legal_ident, c);
-        ///     assert!(ident(&illegal, d).is_err());
+        ///     assert!(ident(&illegal).is_err());
         /// }
         ///
         /// // Quoted idents can contain anything but '|' and '\'.
         /// let id = "|\n + ~ ! so free - = <> 😸 /? @^  \n\n /// |";
-        /// assert_eq!(ident(id, d), Ok(id));
+        /// assert_eq!(*ident(id).unwrap(), id);
         /// ```
-        pub rule ident() -> &'input str
+        pub rule ident() -> Spn<&'input str>
         = quiet! {
-            $(
+            s:position!()
+            ident:$(
                 // Unquoted ident, notice it's a bit different from SMT-LIB.
                 [ 'a'..='z' | 'A'..='Z' | '_' ]
                 [ 'a'..='z' | 'A'..='Z' | '_' | '0'..='9' ]*
             )
+            e:position!() {?
+                if is_kw(ident) {
+                    Err("unexpected keyword")
+                } else {
+                    Ok(Spn::new(ident, (s, e)))
+                }
+            }
             // Quoted ident.
-            / $( "|" [^ '|' | '\\']* "|" )
+            /
+            s:position!()
+            ident:$( "|" [^ '|' | '\\']* "|" )
+            e:position!() {?
+                if is_kw(ident) {
+                    Err("unexpected keyword")
+                } else {
+                    Ok(Spn::new(ident, (s, e)))
+                }
+            }
         }
         // Error message.
         / expected!("quoted or unquoted identifier")
@@ -117,47 +132,49 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::bool};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::bool};
         ///
-        /// assert!(bool("true", d).unwrap());
-        /// assert!(bool("⊤", d).unwrap());
-        /// assert!(!bool("false", d).unwrap());
-        /// assert!(!bool("⊥", d).unwrap());
+        /// assert!(*bool("true").unwrap());
+        /// assert!(*bool("⊤").unwrap());
+        /// assert!(!*bool("false").unwrap());
+        /// assert!(!*bool("⊥").unwrap());
         /// ```
-        pub rule bool() -> bool
-        = ("true" / "⊤") { true }
-        / ("false" / "⊥") { false }
+        pub rule bool() -> Spn<bool>
+        = s:position!() ("true" / "⊤") e:position!() { Spn::new(true, (s, e)) }
+        / s:position!() ("false" / "⊥") e:position!() { Spn::new(false, (s, e)) }
 
         /// Recognizes numbers: `0` and `[1-9][0-9]*`.
         ///
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::number};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::number};
         ///
         /// let n = "0";
-        /// assert_eq!(number(n, d), Ok(n));
+        /// assert_eq!(*number(n).unwrap(), n);
         /// let n = "72054324";
-        /// assert_eq!(number(n, d), Ok(n));
-        pub rule number() -> &'input str
-        = $("0" / ['1'..='9']['0'..='9']*)
+        /// assert_eq!(*number(n).unwrap(), n);
+        pub rule number() -> Spn<&'input str>
+        = s:position!() n:$("0" / ['1'..='9']['0'..='9']*) e:position!() {
+            Spn::new(n, (s, e))
+        }
         /// Same as [`number`] but generates an [`Int`].
         ///
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{prelude::Int, trans::Decls, parse::peg_parser::int_number};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{prelude::Int, trans::Decls, parse::rules::int_number};
         ///
         /// let n = 0;
-        /// assert_eq!(int_number(&n.to_string(), d), Ok(Int::from(n)));
+        /// assert_eq!(*int_number(&n.to_string()).unwrap(), Int::from(n));
         /// let n = 72054324;
-        /// assert_eq!(int_number(&n.to_string(), d), Ok(Int::from(n)));
-        pub rule int_number() -> Int
+        /// assert_eq!(*int_number(&n.to_string()).unwrap(), Int::from(n));
+        pub rule int_number() -> Spn<Int>
         = digits:number() {?
-            Int::parse_bytes(digits.as_bytes(), 10).ok_or("illegal unsigned integer")
+            digits.res_map(|digits|
+                Int::parse_bytes(digits.as_bytes(), 10)
+                    .ok_or("illegal unsigned integer")
+            )
         }
 
         /// Parses an unsigned [`Int`], cannot be followed by a `.`.
@@ -165,22 +182,21 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::uint, prelude::Int};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::uint, prelude::Int};
         ///
         /// let n = 0;
-        /// assert_eq!(uint(&n.to_string(), d), Ok(Int::from(n)));
+        /// assert_eq!(*uint(&n.to_string()).unwrap(), Int::from(n));
         /// let n = 72054324;
-        /// assert_eq!(uint(&n.to_string(), d), Ok(Int::from(n)));
+        /// assert_eq!(*uint(&n.to_string()).unwrap(), Int::from(n));
         ///
         /// // Cannot be followed by a `.`.
         /// let n = "72054324.";
         /// assert_eq!(
-        ///     uint(n, d).unwrap_err().to_string(),
+        ///     uint(n).unwrap_err().to_string(),
         ///     "error at 1:1: expected integer"
         /// );
         /// ```
-        pub rule uint() -> Int
+        pub rule uint() -> Spn<Int>
         = quiet! {
             res:int_number() !['.'] { res }
         }
@@ -192,38 +208,42 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::peg_parser::decimal, prelude::{Int, Rat}};
-        /// let d = &Decls::new();
+        /// # use mikino_api::{trans::Decls, parse::rules::decimal, prelude::{Int, Rat}};
         ///
         /// let n = 0.0;
         /// # println!("{:.0}.", n);
-        /// assert_eq!(decimal(&format!("{:.0}.", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.0}.", n)).unwrap(), Rat::from_float(n).unwrap());
         /// # println!("{:.1}", n);
-        /// assert_eq!(decimal(&format!("{:.1}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.1}", n)).unwrap(), Rat::from_float(n).unwrap());
         /// # println!("{:.7}", n);
-        /// assert_eq!(decimal(&format!("{:.7}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.7}", n)).unwrap(), Rat::from_float(n).unwrap());
         /// let n = 546205420374.0;
         /// # println!("{:.0}.", n);
-        /// assert_eq!(decimal(&format!("{:.0}.", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.0}.", n)).unwrap(), Rat::from_float(n).unwrap());
         /// # println!("{:.1}", n);
-        /// assert_eq!(decimal(&format!("{:.1}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.1}", n)).unwrap(), Rat::from_float(n).unwrap());
         /// # println!("{:.7}", n);
-        /// assert_eq!(decimal(&format!("{:.7}", n), d), Ok(Rat::from_float(n).unwrap()));
+        /// assert_eq!(*decimal(&format!("{:.7}", n)).unwrap(), Rat::from_float(n).unwrap());
         /// let n = 72054324.54205;
         /// # println!("{}", n);
         /// assert_eq!(
-        ///     decimal(&format!("{}", n), d),
-        ///     Ok(Rat::new((7205432454205 as u64).into(), 100000.into())),
+        ///     *decimal(&format!("{}", n)).unwrap(),
+        ///     Rat::new((7205432454205 as u64).into(), 100000.into()),
         /// );
         /// # println!("{}00000000", n);
         /// assert_eq!(
-        ///     decimal(&format!("{}00000000", n), d),
-        ///     Ok(Rat::new((7205432454205 as u64).into(), 100000.into())),
+        ///     *decimal(&format!("{}00000000", n)).unwrap(),
+        ///     Rat::new((7205432454205 as u64).into(), 100000.into()),
         /// );
         /// ```
-        pub rule decimal() -> Rat
+        pub rule decimal() -> Spn<Rat>
         = quiet! {
-            n:int_number() "." d:$(['0'..='9']*) {?
+            s:position!()
+            n:int_number()
+            "."
+            d:$(['0'..='9']*)
+            e:position!() {?
+                let n = n.inner;
                 let mut numer = n;
                 let mut denom = Int::one();
                 if !d.is_empty() {
@@ -237,47 +257,221 @@ peg::parser! {
                 }
                 let rat = Rat::new(numer, denom);
 
-                Ok(rat)
+                Ok(Spn::new(rat, (s, e)))
             }
         }
         / expected!("decimal number")
 
-        /// Parses stateless variables.
-        pub rule var() -> Var
-        = id:ident() {?
-            decls.get_var(id).ok_or("unknown variable")
+        pub rule cst() -> Spn<Cst>
+        =
+        rat:decimal() {
+            rat.map(Cst::R)
+        }
+        / int:uint() {
+            int.map(Cst::I)
+        }
+        / b:bool() {
+            b.map(Cst::B)
         }
 
         /// Parses variables.
-        pub rule svar() -> SVar
-        = var:var() primed:$("'")? {
-            SVar::new(var, primed.is_some())
+        pub rule hsmt_var() -> Ast<'input>
+        = var:ident() prime:(
+            ps:position!() "'" pe:position!() {
+                Span::from((ps, pe))
+            }
+        )? {
+            Ast::svar(var, prime)
         }
 
-        // /// Parses operator applications.
-        // rule app() -> SExpr
-        // = quiet! {
-        //     precedence! {
-
-        //     }
-        // }
-        // / expected!("operator application")
+        /// Parses an if-then-else.
+        ///
+        /// No parens needed.
+        rule hsmt_ite() -> Ast<'input>
+        = quiet! {
+            s:position!() "if" e:position!()
+            _ cnd:hsmt()
+            _ "then"
+            _ thn:hsmt()
+            _ "else"
+            _ els:hsmt() {
+                Ast::app(Spn::new(Op::Ite, (s,e)), vec![cnd, thn, els])
+            }
+        }
+        / expected!("if-then-else")
 
         /// Parses polymorphic expressions.
-        rule pexpr<V>(
-            parse_var: rule<V>
-        ) -> PExpr<V>
-        = var:parse_var() {
-            PExpr::new_var(var)
+        /// Parses stateful expressions.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use mikino_api::parse::rules::hsmt;
+        /// let ast = hsmt(
+        ///     "if a ∧ n ≥ 10 then n' = n - 1 else if false then n' > n else false"
+        /// ).unwrap();
+        /// assert_eq!(
+        ///     ast.to_string(),
+        ///     "(\
+        ///         if (a ⋀ (n ≥ 10)) \
+        ///         then (n' = (n - 1)) \
+        ///         else (if false then (n' > n) else false)\
+        ///     )",
+        /// )
+        /// ```
+        ///
+        /// ```rust
+        /// use mikino_api::parse::rules::hsmt;
+        /// let ast = hsmt(
+        ///     "a ∧ x ≥ 7 - m ∨ if 7 = n + m then b_1 ∨ b_2 else c"
+        /// ).unwrap();
+        /// assert_eq!(
+        ///     ast.to_string(),
+        ///     "((a ⋀ (x ≥ (7 - m))) ⋁ (if (7 = (n + m)) then (b_1 ⋁ b_2) else c))",
+        /// )
+        /// ```
+        pub rule hsmt() -> Ast<'input>
+        = ast:precedence! {
+            // Implication, right associative.
+            lft:@ _ s:position!() (
+                "=>" / "⇒" / "→" / "⊃"
+             ) e:position!() _ rgt:(@) {
+                Ast::binapp(Spn::new(Op::Implies, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() (
+                "∨" / "⋁" / "||"
+             ) e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() (
+                "∧" / "⋀" / "&&"
+            ) e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "<" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Lt, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() ("<=" / "≤") e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Le, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() (">=" / "≥") e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Ge, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() ">" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Gt, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "=" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Eq, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "+" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Add, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "-" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Sub, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "*" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Mul, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "/" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Div, (s, e)), lft, rgt)
+            }
+            --
+            s:position!() ("¬" / "!") e:position!() _ arg:@ {
+                Ast::unapp(Spn::new(Op::Not, (s, e)), arg)
+            }
+            s:position!() "-" e:position!() _ arg:@ {
+                Ast::unapp(Spn::new(Op::Sub, (s, e)), arg)
+            }
+            --
+            ite:hsmt_ite() {
+                ite
+            }
+            var:hsmt_var() {
+                var
+            }
+            cst:cst() {
+                Ast::cst(cst)
+            }
+            "(" _ e:hsmt() _ ")" {
+                let mut e = e;
+                e.close();
+                e
+            }
         }
 
-        /// Parses stateless expressions.
-        pub rule expr() -> Expr
-        = pexpr(<var()>)
+        /// Parses a type.
+        pub rule hsmt_typ() -> expr::Typ
+        = "int" { expr::Typ::Int }
+        / "rat" { expr::Typ::Rat }
+        / "bool" { expr::Typ::Bool }
 
-        /// Parses stateful expressions.
-        pub rule sexpr() -> SExpr
-        = pexpr(<svar()>)
+        /// Parses some declarations.
+        pub rule hsmt_decls() -> PRes<trans::Decls>
+        = "("
+            state:(
+                _ svar:ident() svars:( _ "," _ id:ident() { id })*
+                _ ":" _ svars_typ:hsmt_typ() {
+                    (svar, svars, svars_typ)
+                }
+            )*
+        _ ")" {
+            let mut decls = trans::Decls::new();
+            for (svar, svars, typ) in state {
+                for svar in Some(svar).into_iter().chain(svars) {
+                    let prev = decls.register(svar.inner, typ);
+                    if prev.is_some() {
+                        return Err(PError::new(
+                            format!("variable `{}` is already declared", svar.inner),
+                            svar.span
+                        ));
+                    }
+                }
+            }
+            Ok(decls)
+        }
+
+        /// Parses some candidates.
+        pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
+        = "(" candidates:(
+            _ s:position!() name:$(
+                "\"" ("\\\"" / [^'"'])* "\""
+            ) e:position!() _ ":" _
+            expr:hsmt() {
+                (Spn::new(name, (s, e)), expr)
+            }
+        )+ _ ")" {
+            candidates
+        }
+
+        /// Parses a full instance.
+        pub rule hsmt_instance() -> PRes<trans::Sys>
+        =
+        _ "state" _ decls:hsmt_decls()
+        _ "init" _ "(" _ init:hsmt() _  ")"
+        _ "trans" _ "(" _ trans:hsmt() _ ")"
+        _ "candidates" _ candidates:candidates()
+        _ {
+            let decls = decls?;
+            let init = init.to_expr(&decls)?;
+            let trans = trans.to_sexpr(&decls)?;
+
+            let mut pos = Map::new();
+
+            for (name, expr) in candidates {
+                let candidate = expr.to_expr(&decls).map_err(|e| e.chain_err(|| format!("in candidate `{}`", name.inner)))?;
+                let prev =  pos.insert(name.inner.to_string(), candidate);
+                if prev.is_some() {
+                    return Err(PError::new("a candidate with this name is already defined", name.span))
+                }
+            }
+
+            Ok(trans::Sys::new(decls, init, trans, pos))
+        }
     }
 }
 
@@ -914,7 +1108,10 @@ impl<'txt> Parser<'txt> {
     /// Parses a stateless/stateful expression.
     ///
     /// Stackless.
-    pub fn pexpr<V>(&mut self, parse_var: impl Fn(&mut Self) -> Res<Option<V>>) -> Res<PExpr<V>> {
+    pub fn pexpr<V>(&mut self, parse_var: impl Fn(&mut Self) -> Res<Option<V>>) -> Res<PExpr<V>>
+    where
+        V: HasTyp,
+    {
         let mut stack: Vec<(Op, Vec<PExpr<V>>)> = vec![];
 
         'go_down_applications: loop {
@@ -1072,6 +1269,30 @@ impl<'txt> Parser<'txt> {
             bail!(self.fail("expected end of file"))
         } else {
             Ok(Sys::new(self.decls, init, trans, po_s))
+        }
+    }
+
+    pub fn new_sys(self) -> Res<Sys> {
+        match rules::hsmt_instance(self.txt) {
+            Ok(res) => match res {
+                Ok(sys) => Ok(sys),
+                Err(e) => {
+                    let span = e.span;
+                    let (line, row, col) = self
+                        .pretty_pos(span.start)
+                        .chain_err(|| "internal parse error")?;
+                    let err =
+                        Error::from(ErrorKind::ParseErr(row, col, line, "parse error".into()));
+                    return Err(err.chain_err(|| e.error));
+                }
+            },
+            Err(e) => {
+                let (line, row, col) = self
+                    .pretty_pos(e.location.offset)
+                    .chain_err(|| "internal parse error")?;
+                let err = Error::from(ErrorKind::ParseErr(row, col, line, "parse error".into()));
+                return Err(err.chain_err(|| e.to_string()));
+            }
         }
     }
 }

@@ -52,6 +52,9 @@ build_keywords! {
         init: "init",
         /// Transition relation declaration keyword.
         trans: "trans",
+        ite_if: "if",
+        ite_then: "then",
+        ite_else: "else",
     }
     /// SMT-LIB-specific keywords.
     smt_lib {
