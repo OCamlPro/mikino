@@ -17,9 +17,6 @@ categories = ["science"]
 name = "sys"
 test = true
 
-[features]
-force-color = []
-
 [dependencies]
 error-chain = "^0.12"
 num = "^0.4"

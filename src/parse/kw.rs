@@ -56,9 +56,15 @@ build_keywords! {
         cands: "candidates",
 
         /// ITE's *if*.
-        ite_if: "if",
+        op_ite_if: "if",
         /// ITE's *else*.
-        ite_else: "else",
+        op_ite_else: "else",
+        /// Conjunction.
+        op_and: "and",
+        /// Disjunction.
+        op_or: "or",
+        /// Negation.
+        op_not: "not",
     }
     /// SMT-LIB-specific keywords.
     smt_lib {

@@ -1,4 +1,6 @@
 //! Transition system parser.
+//!
+//! The [`DEMO` constant][crate::DEMO] illustrates and discusses the syntax expected by the parser.
 
 crate::prelude!();
 
@@ -385,13 +387,13 @@ peg::parser! {
             }
             --
             lft:(@) _ s:position!() (
-                "∨" / "⋁" / "||"
+                "∨" / "⋁" / "||" / "and"
              ) e:position!() _ rgt:@ {
                 Ast::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() (
-                "∧" / "⋀" / "&&"
+                "∧" / "⋀" / "&&" / "or"
             ) e:position!() _ rgt:@ {
                 Ast::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
             }
@@ -426,7 +428,7 @@ peg::parser! {
                 Ast::binapp(Spn::new(Op::Div, (s, e)), lft, rgt)
             }
             --
-            s:position!() ("¬" / "!") e:position!() _ arg:@ {
+            s:position!() ("¬" / "!" / "not") e:position!() _ arg:@ {
                 Ast::unapp(Spn::new(Op::Not, (s, e)), arg)
             }
             s:position!() "-" e:position!() _ arg:@ {
