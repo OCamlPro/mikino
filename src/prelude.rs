@@ -46,7 +46,7 @@ error_chain::error_chain! {
         /// A parse error.
         ///
         /// **NB**: `row` and `col` start at zero.
-        ParseErr(row: usize, col: usize, line: String, msg: String) {
+        ParseErr(prev: Option<String>, row: usize, col: usize, line: String, next: Option<String>, msg: String) {
             description("parse error")
             display("error @{}:{}: `{}`, {}", row, col, line, msg)
         }

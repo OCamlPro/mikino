@@ -108,36 +108,41 @@ macro_rules! parse_build_check {
 #[test]
 fn collapse() {
     parse_build_check! {
-        input: "a - b - c' - d",
+        input: "a - b - 'c - d",
         decls: (a, b, c, d: int),
         expect: "(- a@0 b@0 c@1 d@0)",
     }
     parse_build_check! {
-        input: "a + b' + c + d'",
+        input: "a + 'b + c + 'd",
         decls: (a, b, c, d: int),
         expect: "(+ a@0 b@1 c@0 d@1)",
     }
     parse_build_check! {
-        input: "a > b' > c > d'",
+        input: "a > 'b > c > 'd",
         decls: (a, b, c, d: int),
         expect: "(> a@0 b@1 c@0 d@1)",
+    }
+    parse_build_check! {
+        input: "a = 'b = c = 'd",
+        decls: (a, b, c, d: int),
+        expect: "(= a@0 b@1 c@0 d@1)",
     }
 }
 
 #[test]
 fn precedence() {
     parse_build_check! {
-        input: "a + b * c'",
+        input: "a + b * 'c",
         decls: (a, b, c: int),
         expect: "(+ a@0 (* b@0 c@1))",
     }
     parse_build_check! {
-        input: "a < if a' + 2 > b then 7 else if a' > c then c + 2 else 10",
+        input: "a < if 'a + 2 > b { 7 } else if 'a > c { c + 2 } else { 10 }",
         decls: (a, b, c: int),
         expect: "(< a@0 (ite (> (+ a@1 2) b@0) 7 (ite (> a@1 c@0) (+ c@0 2) 10)))",
     }
     parse_build_check! {
-        input: "boo_1 && a < (if a' + 2 > b then 7 else if a' > c then c + 2 else 10) && boo_2",
+        input: "boo_1 && a < if 'a + 2 > b { 7 } else if 'a > c { c + 2 } else { 10 } && boo_2",
         decls: (
             a, b, c: int
             boo_1, boo_2: bool

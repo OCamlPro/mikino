@@ -43,6 +43,7 @@ impl PError {
 pub type PRes<T> = Result<T, PError>;
 
 /// A span in the input text.
+#[readonly::make]
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
     /// Span's start (inclusive).
@@ -51,20 +52,50 @@ pub struct Span {
     pub end: usize,
 }
 impl Span {
+    /// Constructor.
+    pub fn new(start: usize, end: usize) -> Self {
+        debug_assert!(start <= end);
+        Span { start, end }
+    }
     /// Merges two spans, `self`'s start and `other`'s end.
     ///
     /// - illegal if `self.start > other.end`.
     pub fn merge(self, other: Self) -> Self {
-        debug_assert!(self.start <= other.end);
-        Span {
-            start: self.start,
-            end: other.end,
+        (self.start, other.end).into()
+    }
+
+    /// Extracts the relevant line of the input, and the previous/next line if any.
+    pub fn pretty_of(self, text: &str) -> (Option<String>, usize, usize, String, Option<String>) {
+        let mut lines = text.lines().enumerate();
+
+        let mut count = self.start;
+        let mut prev_line = None;
+
+        while let Some((row, line)) = lines.next() {
+            if line.len() >= count {
+                return (
+                    prev_line.map(String::from),
+                    row,
+                    count,
+                    line.into(),
+                    lines.next().map(|(_, line)| line.into()),
+                );
+            }
+
+            count -= line.len() + 1;
+            prev_line = Some(line);
         }
+
+        panic!(
+            "illegal offset {} on text of length {}",
+            self.start,
+            text.len()
+        );
     }
 }
 impl From<(usize, usize)> for Span {
     fn from((start, end): (usize, usize)) -> Self {
-        Self { start, end }
+        Self::new(start, end)
     }
 }
 
@@ -273,10 +304,10 @@ impl<'txt> fmt::Display for Ast<'txt> {
         match self {
             Self::Cst(cst) => cst.fmt(fmt),
             Self::Var { ident, pon } => {
-                ident.fmt(fmt)?;
                 if pon.is_some() {
                     "'".fmt(fmt)?
                 }
+                ident.fmt(fmt)?;
                 Ok(())
             }
             &Self::App {

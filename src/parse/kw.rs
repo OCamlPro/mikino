@@ -47,13 +47,17 @@ build_keywords! {
     /// Mikino-specific keywords.
     mkn {
         /// Variable declaration keyword.
-        vars: "vars",
+        state: "state",
         /// Initial predicate declaration keyword.
         init: "init",
         /// Transition relation declaration keyword.
         trans: "trans",
+        /// Candidate map keyword.
+        cands: "candidates",
+
+        /// ITE's *if*.
         ite_if: "if",
-        ite_then: "then",
+        /// ITE's *else*.
         ite_else: "else",
     }
     /// SMT-LIB-specific keywords.

@@ -9,6 +9,9 @@ use trans::{Decls, Sys};
 mod ast;
 pub mod kw;
 
+#[cfg(test)]
+mod test;
+
 pub use ast::*;
 
 /// Yields `true` if `ident` is a keyword.
@@ -31,10 +34,11 @@ peg::parser! {
         pub rule whitespace() = quiet! {
             [ ' ' | '\n' | '\t' ]
         }
+
         /// Comment.
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::comment};
+        /// # use mikino_api::parse::rules::comment;
         ///
         /// // Recognizes rust-style comments.
         /// assert_eq!(comment("// some comment\n"), Ok(()));
@@ -63,13 +67,44 @@ peg::parser! {
         /// Whitespace or comment.
         rule _() = quiet! { ( whitespace() / comment() )* }
 
+        /// Outer comments.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::outer_doc;
+        /// let input = "\t/// Some\n\t/// comments\n";
+        /// let cmts = outer_doc(input).unwrap();
+        /// assert_eq!(cmts, vec!["Some".to_string(), "comments".to_string()]);
+        /// ```
+        pub rule outer_doc() -> Vec<&'input str>
+        = quiet! {
+            (_ "///" $(" ")? line:$([^'\n']*) ("\n" / ![_]) { line })*
+        }
+        // / expected!("outer documentation")
+
+        /// Inner comments.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::inner_doc;
+        /// let input = "\t//! Some\n\t//! comments\n";
+        /// let cmts = inner_doc(input).unwrap();
+        /// assert_eq!(cmts, vec!["Some".to_string(), "comments".to_string()]);
+        /// ```
+        pub rule inner_doc() -> Vec<&'input str>
+        = quiet! {
+            (_ "//!" $(" ")? line:$([^'\n']*) ("\n" / ![_]) { line })*
+        }
+        // / expected!("inner documentation")
+
         /// Ident parsing.
         ///
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::ident};
-        ///
+        /// # use mikino_api::parse::rules::ident;
         /// // Regular idents are okay.
         /// assert_eq!(*ident("v_1").unwrap(), "v_1");
         /// assert_eq!(*ident("my_var_7").unwrap(), "my_var_7");
@@ -132,8 +167,7 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::bool};
-        ///
+        /// # use mikino_api::parse::rules::bool;
         /// assert!(*bool("true").unwrap());
         /// assert!(*bool("⊤").unwrap());
         /// assert!(!*bool("false").unwrap());
@@ -148,8 +182,7 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::number};
-        ///
+        /// # use mikino_api::parse::rules::number;
         /// let n = "0";
         /// assert_eq!(*number(n).unwrap(), n);
         /// let n = "72054324";
@@ -164,7 +197,6 @@ peg::parser! {
         ///
         /// ```rust
         /// # use mikino_api::{prelude::Int, trans::Decls, parse::rules::int_number};
-        ///
         /// let n = 0;
         /// assert_eq!(*int_number(&n.to_string()).unwrap(), Int::from(n));
         /// let n = 72054324;
@@ -182,8 +214,7 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::uint, prelude::Int};
-        ///
+        /// # use mikino_api::{parse::rules::uint, prelude::Int};
         /// let n = 0;
         /// assert_eq!(*uint(&n.to_string()).unwrap(), Int::from(n));
         /// let n = 72054324;
@@ -208,8 +239,7 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::{trans::Decls, parse::rules::decimal, prelude::{Int, Rat}};
-        ///
+        /// # use mikino_api::{parse::rules::decimal, prelude::{Int, Rat}};
         /// let n = 0.0;
         /// # println!("{:.0}.", n);
         /// assert_eq!(*decimal(&format!("{:.0}.", n)).unwrap(), Rat::from_float(n).unwrap());
@@ -276,13 +306,16 @@ peg::parser! {
 
         /// Parses variables.
         pub rule hsmt_var() -> Ast<'input>
-        = var:ident() prime:(
-            ps:position!() "'" pe:position!() {
-                Span::from((ps, pe))
+        = quiet! {
+            prime:(
+                ps:position!() "'" pe:position!() {
+                    Span::from((ps, pe))
+                }
+            )? var:ident() {
+                Ast::svar(var, prime)
             }
-        )? {
-            Ast::svar(var, prime)
         }
+        / expected!("(un)primed state variable")
 
         /// Parses an if-then-else.
         ///
@@ -291,10 +324,22 @@ peg::parser! {
         = quiet! {
             s:position!() "if" e:position!()
             _ cnd:hsmt()
-            _ "then"
+            _ "{"
             _ thn:hsmt()
-            _ "else"
-            _ els:hsmt() {
+            _ "}"
+            _ elseif:(
+                "else" _ s:position!() "if" e:position!() _ cnd:hsmt() _ "{" _ thn:hsmt() _ "}" {
+                    (Span::new(s, e), cnd, thn)
+                }
+            )*
+            _ "else" _ "{"
+            _ els:hsmt()
+            _ "}" {
+                let ite = Op::Ite;
+                let els = elseif.into_iter().rev().fold(
+                    els,
+                    |els, (if_span, cnd, thn)| Ast::app(Spn::new(ite, if_span), vec![cnd, thn, els]),
+                );
                 Ast::app(Spn::new(Op::Ite, (s,e)), vec![cnd, thn, els])
             }
         }
@@ -306,16 +351,16 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// use mikino_api::parse::rules::hsmt;
+        /// # use mikino_api::parse::rules::hsmt;
         /// let ast = hsmt(
-        ///     "if a ∧ n ≥ 10 then n' = n - 1 else if false then n' > n else false"
+        ///     "if a ∧ n ≥ 10 { 'n = n - 1 } else if false { 'n > n } else { false }"
         /// ).unwrap();
         /// assert_eq!(
         ///     ast.to_string(),
         ///     "(\
         ///         if (a ⋀ (n ≥ 10)) \
-        ///         then (n' = (n - 1)) \
-        ///         else (if false then (n' > n) else false)\
+        ///         then ('n = (n - 1)) \
+        ///         else (if false then ('n > n) else false)\
         ///     )",
         /// )
         /// ```
@@ -323,7 +368,7 @@ peg::parser! {
         /// ```rust
         /// use mikino_api::parse::rules::hsmt;
         /// let ast = hsmt(
-        ///     "a ∧ x ≥ 7 - m ∨ if 7 = n + m then b_1 ∨ b_2 else c"
+        ///     "a ∧ x ≥ 7 - m ∨ if 7 = n + m { b_1 ∨ b_2 } else { c }"
         /// ).unwrap();
         /// assert_eq!(
         ///     ast.to_string(),
@@ -406,20 +451,30 @@ peg::parser! {
 
         /// Parses a type.
         pub rule hsmt_typ() -> expr::Typ
-        = "int" { expr::Typ::Int }
-        / "rat" { expr::Typ::Rat }
-        / "bool" { expr::Typ::Bool }
+        = quiet! {
+            "int" { expr::Typ::Int }
+            / "rat" { expr::Typ::Rat }
+            / "bool" { expr::Typ::Bool }
+        }
+        / expected!("a type (`int`, `rat` or `bool`")
 
         /// Parses some declarations.
-        pub rule hsmt_decls() -> PRes<trans::Decls>
-        = "("
-            state:(
-                _ svar:ident() svars:( _ "," _ id:ident() { id })*
-                _ ":" _ svars_typ:hsmt_typ() {
-                    (svar, svars, svars_typ)
+        pub rule state() -> PRes<trans::Decls>
+        = state:(
+            svar_doc:outer_doc()
+            _
+            svar:ident()
+            svars:(
+                _ ","
+                svar_doc:outer_doc()
+                _ id:ident() {
+                    id
                 }
             )*
-        _ ")" {
+            _ ":" _ svars_typ:hsmt_typ() {
+                (svar, svars, svars_typ)
+            }
+        )* {
             let mut decls = trans::Decls::new();
             for (svar, svars, typ) in state {
                 for svar in Some(svar).into_iter().chain(svars) {
@@ -437,24 +492,28 @@ peg::parser! {
 
         /// Parses some candidates.
         pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
-        = "(" candidates:(
+        = (
             _ s:position!() name:$(
                 "\"" ("\\\"" / [^'"'])* "\""
             ) e:position!() _ ":" _
             expr:hsmt() {
                 (Spn::new(name, (s, e)), expr)
             }
-        )+ _ ")" {
-            candidates
-        }
+        )+
 
         /// Parses a full instance.
-        pub rule hsmt_instance() -> PRes<trans::Sys>
+        pub rule hsmt_sys() -> PRes<trans::Sys>
         =
-        _ "state" _ decls:hsmt_decls()
-        _ "init" _ "(" _ init:hsmt() _  ")"
-        _ "trans" _ "(" _ trans:hsmt() _ ")"
-        _ "candidates" _ candidates:candidates()
+        sys_doc:inner_doc()
+
+        state_doc:outer_doc()
+        _ "state" _ "{" _ decls:state() _ "}"
+        state_doc:outer_doc()
+        _ "init" _ "{" _ init:hsmt() _  "}"
+        state_doc:outer_doc()
+        _ "trans" _ "{" _ trans:hsmt() _ "}"
+        state_doc:outer_doc()
+        _ "candidates" _ "{" _ candidates:candidates() _ "}"
         _ {
             let decls = decls?;
             let init = init.to_expr(&decls)?;
@@ -501,14 +560,8 @@ impl<'txt> Parser<'txt> {
 
     /// Fails at some position.
     pub fn fail_at(&self, pos: usize, msg: impl std::fmt::Display) -> Error {
-        let (line, row, col) = match self.pretty_pos(pos) {
-            Ok(res) => res,
-            Err(e) => {
-                return e
-                    .chain_err(|| format!("while retrieving pretty position @{}: `{}`", pos, msg))
-            }
-        };
-        ErrorKind::ParseErr(row, col, line, msg.to_string()).into()
+        let (prev, row, col, line, next) = Span::new(pos, pos).pretty_of(self.txt);
+        ErrorKind::ParseErr(prev, row, col, line, next, msg.to_string()).into()
     }
 
     /// Fails at the current position.
@@ -1148,151 +1201,38 @@ impl<'txt> Parser<'txt> {
             return Ok(expr);
         }
     }
+}
 
-    /// Parses some declarations.
-    pub fn decls(&mut self) -> Res<()> {
-        self.tag("vars")
-            .chain_err(|| "starting declaration block")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "before declaration block")?;
-        self.ws_cmt();
-        self.tag("(").chain_err(|| "starting declaration block")?;
-        self.ws_cmt();
-
-        #[allow(unused_labels)]
-        'parse_decls: while !self.try_tag(")") {
-            let mut ids = vec![(
-                self.cursor,
-                self.id()
-                    .chain_err(|| "or `)` closing variable declarations")?,
-            )];
-            self.ws_cmt();
-            while self.try_tag(",") {
-                self.ws_cmt();
-                ids.push((self.cursor, self.id().chain_err(|| "after `,`")?));
-                self.ws_cmt();
-            }
-            self.tag(":")
-                .chain_err(|| "between identifier(s) and type")?;
-            self.ws_cmt();
-            let typ = self.typ()?;
-            for (start, id) in ids {
-                let prev = self.decls.register(id, typ);
-                if prev.is_some() {
-                    bail!(self.fail_at(start, format!("trying to re-define variable `{}`", id)))
-                }
-            }
-            self.ws_cmt();
-        }
-
-        Ok(())
-    }
-
-    /// Parses the initial state predicate.
-    pub fn init(&mut self) -> Res<Expr> {
-        self.tag("init").chain_err(|| "starting init predicate")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "starting init predicate")?;
-        self.ws_cmt();
-        self.expr()
-    }
-
-    /// Parses the initial state predicate.
-    pub fn trans(&mut self) -> Res<SExpr> {
-        self.tag("trans")
-            .chain_err(|| "starting transition predicate")?;
-        self.ws_cmt();
-        self.tag(":")
-            .chain_err(|| "starting transition predicate")?;
-        self.ws_cmt();
-        self.sexpr()
-    }
-
-    /// Parses the proof obligations of the system.
-    pub fn po_s(&mut self) -> Res<Map<String, Expr>> {
-        self.tag("po_s")
-            .chain_err(|| "starting the list of proof obligations")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "before proof obligation list")?;
-        self.ws_cmt();
-        self.tag("(")
-            .chain_err(|| "opening proof obligation list")?;
-        self.ws_cmt();
-        let mut map = Map::new();
-        let mut po_start;
-
-        while {
-            po_start = self.cursor;
-            self.try_tag("\"")
-        } {
-            let po_name = self.parse_until(|c| c == '"', false).trim();
-            self.tag("\"")
-                .chain_err(|| "closing proof obligation name")?;
-            self.ws_cmt();
-            self.tag(":")
-                .chain_err(|| "between proof obligation name and its definition")?;
-            self.ws_cmt();
-            let def = self.expr().chain_err(|| {
-                format!(
-                    "while parsing definition for proof obligation `{}`",
-                    po_name
-                )
-            })?;
-            let prev = map.insert(po_name.into(), def);
-            if prev.is_some() {
-                bail!(self.fail_at(
-                    po_start,
-                    format!("illegal re-definition of proof obligation `{}`", po_name),
-                ))
-            }
-            self.ws_cmt();
-        }
-
-        self.tag(")")
-            .chain_err(|| "closing proof obligation list")?;
-
-        Ok(map)
-    }
-
-    /// Parses a full system.
-    pub fn sys(mut self) -> Res<Sys> {
-        self.ws_cmt();
-        self.decls()?;
-        self.ws_cmt();
-        let init = self.init()?;
-        self.ws_cmt();
-        let trans = self.trans()?;
-        self.ws_cmt();
-        let po_s = self.po_s()?;
-        self.ws_cmt();
-        if !self.is_at_eoi() {
-            bail!(self.fail("expected end of file"))
-        } else {
-            Ok(Sys::new(self.decls, init, trans, po_s))
-        }
-    }
-
-    pub fn new_sys(self) -> Res<Sys> {
-        match rules::hsmt_instance(self.txt) {
-            Ok(res) => match res {
-                Ok(sys) => Ok(sys),
-                Err(e) => {
-                    let span = e.span;
-                    let (line, row, col) = self
-                        .pretty_pos(span.start)
-                        .chain_err(|| "internal parse error")?;
-                    let err =
-                        Error::from(ErrorKind::ParseErr(row, col, line, "parse error".into()));
-                    return Err(err.chain_err(|| e.error));
-                }
-            },
+pub fn sys(txt: &str) -> Res<Sys> {
+    match rules::hsmt_sys(txt) {
+        Ok(res) => match res {
+            Ok(sys) => Ok(sys),
             Err(e) => {
-                let (line, row, col) = self
-                    .pretty_pos(e.location.offset)
-                    .chain_err(|| "internal parse error")?;
-                let err = Error::from(ErrorKind::ParseErr(row, col, line, "parse error".into()));
-                return Err(err.chain_err(|| e.to_string()));
+                let span = e.span;
+                let (prev, row, col, line, next) = span.pretty_of(txt);
+                let err = Error::from(ErrorKind::ParseErr(
+                    prev,
+                    row,
+                    col,
+                    line,
+                    next,
+                    "parse error".into(),
+                ));
+                return Err(err.chain_err(|| e.error));
             }
+        },
+        Err(e) => {
+            let span = Span::new(e.location.offset, e.location.offset);
+            let (prev, row, col, line, next) = span.pretty_of(txt);
+            let err = Error::from(ErrorKind::ParseErr(
+                prev,
+                row,
+                col,
+                line,
+                next,
+                "parse error".into(),
+            ));
+            return Err(err.chain_err(|| e.to_string()));
         }
     }
 }
