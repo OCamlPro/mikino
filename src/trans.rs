@@ -25,6 +25,42 @@ pub struct Decls {
     /// Map from variable identifiers to types.
     id_to_typs: Map<String, Typ>,
 }
+impl fmt::Display for Decls {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // Get the IDs ordered.
+        let mut ids: Vec<_> = self.id_to_typs.iter().collect();
+        ids.sort_by(|(id_lft, _), (id_rgt, _)| id_lft.cmp(id_rgt));
+
+        let (clusters, last): (_, Option<(Typ, Vec<&String>)>) =
+            ids.into_iter()
+                .fold((vec![], None), |(mut list, last_opt), (id, typ)| {
+                    if let Some((last_typ, mut last_vars)) = last_opt {
+                        if *typ == last_typ {
+                            last_vars.push(id);
+                            return (list, Some((last_typ, last_vars)));
+                        } else {
+                            list.push((last_typ, last_vars));
+                        }
+                    }
+                    (list, Some((*typ, vec![id])))
+                });
+
+        for (idx, (typ, vars)) in clusters.into_iter().chain(last).enumerate() {
+            if idx > 0 {
+                write!(fmt, "\n")?;
+            }
+            for (idx, var) in vars.into_iter().enumerate() {
+                if idx > 0 {
+                    write!(fmt, ", ")?;
+                }
+                var.fmt(fmt)?;
+            }
+            write!(fmt, ": {}", typ)?;
+        }
+
+        Ok(())
+    }
+}
 impl Decls {
     /// Constructor.
     pub fn new() -> Self {

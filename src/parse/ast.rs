@@ -206,6 +206,14 @@ impl<'txt> Ast<'txt> {
         }
     }
 
+    /// True if `self` is an if-then-else application.
+    pub fn is_ite(&self) -> bool {
+        match self {
+            Self::App { op, .. } if **op == Op::Ite => true,
+            _ => false,
+        }
+    }
+
     /// Closes the application.
     pub fn close(&mut self) {
         match self {
@@ -309,6 +317,21 @@ impl<'txt> fmt::Display for Ast<'txt> {
                 }
                 ident.fmt(fmt)?;
                 Ok(())
+            }
+            &Self::App {
+                op,
+                ref args,
+                closed: _,
+            } if *op == Op::Ite => {
+                assert_eq!(args.len(), 3);
+
+                write!(fmt, "if {} {{ {} }} else ", args[0], args[1])?;
+
+                if args[2].is_ite() {
+                    args[2].fmt(fmt)
+                } else {
+                    write!(fmt, "{{ {} }}", args[2])
+                }
             }
             &Self::App {
                 op,

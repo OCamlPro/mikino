@@ -150,6 +150,7 @@ impl<'sys> Cexs<'sys> {
 /// Type alias for rsmt2's solver equipped with our parser.
 pub type Solver = SmtSolver<SmtParser>;
 
+/// SMT-LIB parser for expressions, idents, types...
 #[derive(Debug, Clone, Copy)]
 pub struct SmtParser;
 impl<'a> rsmt2::parse::IdentParser<(String, Option<Unroll>), Typ, &'a str> for SmtParser {

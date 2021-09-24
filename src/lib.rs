@@ -1,5 +1,7 @@
 //! A minimal (1-)induction library.
 
+#![forbid(missing_docs)]
+
 pub extern crate rsmt2;
 
 mod macros;

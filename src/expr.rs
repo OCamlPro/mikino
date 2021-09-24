@@ -163,32 +163,40 @@ impl Expr2Smt<()> for Cst {
     }
 }
 
-/// Operator in/pre/suffix.
-#[derive(Debug, Clone, Copy)]
-pub enum Fix {
-    In,
-    Pre,
-    Suf,
-}
-
 /// Operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
+    /// If-then-else.
     Ite,
+    /// Logical implication.
     Implies,
+    /// Addition.
     Add,
+    /// Subtraction.
     Sub,
+    /// Multiplication.
     Mul,
+    /// Division.
     Div,
+    /// Integer division.
     IDiv,
+    /// Modulo.
     Mod,
+    /// Greater than or equal to.
     Ge,
+    /// Less than or equal to.
     Le,
+    /// Greater than.
     Gt,
+    /// Less than.
     Lt,
+    /// Equal to.
     Eq,
+    /// Logical negation.
     Not,
+    /// Logical conjunction.
     And,
+    /// Logical disjunction.
     Or,
 }
 impl Op {

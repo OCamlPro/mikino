@@ -31,6 +31,7 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
 }
 
 peg::parser! {
+    /// PEG parsing rules.
     pub grammar rules() for str {
         /// Whitespace.
         pub rule whitespace() = quiet! {
@@ -294,17 +295,20 @@ peg::parser! {
         }
         / expected!("decimal number")
 
+        /// Parses constants.
         pub rule cst() -> Spn<Cst>
-        =
-        rat:decimal() {
-            rat.map(Cst::R)
+        = quiet! {
+            rat:decimal() {
+                rat.map(Cst::R)
+            }
+            / int:uint() {
+                int.map(Cst::I)
+            }
+            / b:bool() {
+                b.map(Cst::B)
+            }
         }
-        / int:uint() {
-            int.map(Cst::I)
-        }
-        / b:bool() {
-            b.map(Cst::B)
-        }
+        / expected!("int/rat/bool constant")
 
         /// Parses variables.
         pub rule hsmt_var() -> Ast<'input>
@@ -321,8 +325,8 @@ peg::parser! {
 
         /// Parses an if-then-else.
         ///
-        /// No parens needed.
-        rule hsmt_ite() -> Ast<'input>
+        /// No parens needed, for documentation see [`hsmt`].
+        pub rule hsmt_ite() -> Ast<'input>
         = quiet! {
             s:position!() "if" e:position!()
             _ cnd:hsmt()
@@ -348,33 +352,39 @@ peg::parser! {
         / expected!("if-then-else")
 
         /// Parses polymorphic expressions.
-        /// Parses stateful expressions.
         ///
         /// # Examples
         ///
         /// ```rust
         /// # use mikino_api::parse::rules::hsmt;
         /// let ast = hsmt(
-        ///     "if a ∧ n ≥ 10 { 'n = n - 1 } else if false { 'n > n } else { false }"
+        ///     "if a ⋀ n ≥ 10 { 'n = n - 1 } \
+        ///     else if false { 'n > n } \
+        ///     else { false }"
         /// ).unwrap();
         /// assert_eq!(
         ///     ast.to_string(),
-        ///     "(\
-        ///         if (a ⋀ (n ≥ 10)) \
-        ///         then ('n = (n - 1)) \
-        ///         else (if false then ('n > n) else false)\
-        ///     )",
+        ///     "\
+        ///         if (a ⋀ (n ≥ 10)) { \
+        ///             ('n = (n - 1)) \
+        ///         } else if false { \
+        ///             ('n > n) \
+        ///         } else { false }\
+        ///     ",
         /// )
         /// ```
         ///
         /// ```rust
         /// use mikino_api::parse::rules::hsmt;
         /// let ast = hsmt(
-        ///     "a ∧ x ≥ 7 - m ∨ if 7 = n + m { b_1 ∨ b_2 } else { c }"
+        ///     "a ⋀ x ≥ 7 - m ⋁ if 7 = n + m { b_1 ⋁ b_2 } else { c }"
         /// ).unwrap();
         /// assert_eq!(
         ///     ast.to_string(),
-        ///     "((a ⋀ (x ≥ (7 - m))) ⋁ (if (7 = (n + m)) then (b_1 ⋁ b_2) else c))",
+        ///     "\
+        ///         ((a ⋀ (x ≥ (7 - m))) \
+        ///         ⋁ if (7 = (n + m)) { (b_1 ⋁ b_2) } else { c })\
+        ///     ",
         /// )
         /// ```
         pub rule hsmt() -> Ast<'input>
@@ -452,6 +462,8 @@ peg::parser! {
         }
 
         /// Parses a type.
+        ///
+        /// Can be `int`, `rat`, or `bool`.
         pub rule hsmt_typ() -> expr::Typ
         = quiet! {
             "int" { expr::Typ::Int }
@@ -460,7 +472,36 @@ peg::parser! {
         }
         / expected!("a type (`int`, `rat` or `bool`")
 
-        /// Parses some declarations.
+        /// Parses a state declaration.
+        ///
+        /// A state declaration is a list of `<ident> : <type>`. No separator is needed. For
+        /// convenience, state variables with the same type can be listed together, separated
+        /// by `,`, before the `: <type>`. For instance, `v_1, v_2, v_3: int`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::state;
+        /// let input = "\
+        ///     n_1 : int
+        ///     b_1 : bool
+        ///     // Avoid putting declarations on the same line, it looks bad.
+        ///     n_2: int b_2 : bool
+        ///     // Aggregated declaration.
+        ///     n_3, n_4, n_5: int
+        ///     p, q: bool\
+        /// ";
+        /// let decls = state(input).unwrap().unwrap();
+        /// assert_eq!(
+        ///     decls.to_string(),
+        ///     // State-declaration-printing sorts and aggregates idents alphabetically.
+        ///     "\
+        /// b_1, b_2: bool
+        /// n_1, n_2, n_3, n_4, n_5: int
+        /// p, q: bool\
+        ///     "
+        /// );
+        /// ```
         pub rule state() -> PRes<trans::Decls>
         = state:(
             svar_doc:outer_doc()
@@ -493,10 +534,37 @@ peg::parser! {
         }
 
         /// Parses some candidates.
+        ///
+        /// Accepts a list of name/expression pairs of the form `<name> : <expr>` (no separator).
+        /// Names are double-quoted `"..."` strings and must all be distinct. Expressions have to
+        /// be stateless (no `'` prime).
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::candidates;
+        /// let input = r#"
+        ///     "some candidate": x ≥ 0
+        ///     "another one": x ≥ y + 2 ⋁ y ≥ -7
+        ///     "tautology": p ⋁ ¬p"#;
+        /// let mut candidates = candidates(input).unwrap().into_iter();
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "some candidate");
+        /// assert_eq!(expr.to_string(), "(x ≥ 0)");
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "another one");
+        /// assert_eq!(expr.to_string(), "((x ≥ (y + 2)) ⋁ (y ≥ (-7)))");
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "tautology");
+        /// assert_eq!(expr.to_string(), "(p ⋁ (¬p))");
+        /// ```
         pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
         = (
-            _ s:position!() name:$(
-                "\"" ("\\\"" / [^'"'])* "\""
+            _ s:position!() name:(
+                "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
             ) e:position!() _ ":" _
             expr:hsmt() {
                 (Spn::new(name, (s, e)), expr)
@@ -504,6 +572,8 @@ peg::parser! {
         )+
 
         /// Parses a full instance.
+        ///
+        /// Same documentation as [the `sys` function][super::sys].
         pub rule hsmt_sys() -> PRes<trans::Sys>
         =
         sys_doc:inner_doc()
@@ -532,6 +602,53 @@ peg::parser! {
             }
 
             Ok(trans::Sys::new(decls, init, trans, pos))
+        }
+    }
+}
+
+/// Parses a system.
+///
+/// Comments are one-line rust-style: `// ..\n`.
+///
+/// A system is composed of four `{ ... }` blocks each starting with a specific keyword:
+///
+/// - `state { ... }`: the [state variables][rules::state] of the system;
+///
+/// - `init { ... }`: the initial predicate, *i.e.* a stateless (no `'` prime) expression;
+///
+/// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
+///
+/// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
+pub fn sys(txt: &str) -> Res<Sys> {
+    match rules::hsmt_sys(txt) {
+        Ok(res) => match res {
+            Ok(sys) => Ok(sys),
+            Err(e) => {
+                let span = e.span;
+                let (prev, row, col, line, next) = span.pretty_of(txt);
+                let err = Error::from(ErrorKind::ParseErr(
+                    prev,
+                    row,
+                    col,
+                    line,
+                    next,
+                    "parse error".into(),
+                ));
+                return Err(err.chain_err(|| e.error));
+            }
+        },
+        Err(e) => {
+            let span = Span::new(e.location.offset, e.location.offset);
+            let (prev, row, col, line, next) = span.pretty_of(txt);
+            let err = Error::from(ErrorKind::ParseErr(
+                prev,
+                row,
+                col,
+                line,
+                next,
+                "parse error".into(),
+            ));
+            return Err(err.chain_err(|| e.to_string()));
         }
     }
 }
@@ -1201,40 +1318,6 @@ impl<'txt> Parser<'txt> {
             }
 
             return Ok(expr);
-        }
-    }
-}
-
-pub fn sys(txt: &str) -> Res<Sys> {
-    match rules::hsmt_sys(txt) {
-        Ok(res) => match res {
-            Ok(sys) => Ok(sys),
-            Err(e) => {
-                let span = e.span;
-                let (prev, row, col, line, next) = span.pretty_of(txt);
-                let err = Error::from(ErrorKind::ParseErr(
-                    prev,
-                    row,
-                    col,
-                    line,
-                    next,
-                    "parse error".into(),
-                ));
-                return Err(err.chain_err(|| e.error));
-            }
-        },
-        Err(e) => {
-            let span = Span::new(e.location.offset, e.location.offset);
-            let (prev, row, col, line, next) = span.pretty_of(txt);
-            let err = Error::from(ErrorKind::ParseErr(
-                prev,
-                row,
-                col,
-                line,
-                next,
-                "parse error".into(),
-            ));
-            return Err(err.chain_err(|| e.to_string()));
         }
     }
 }
