@@ -1,10 +1,663 @@
 //! Transition system parser.
+//!
+//! The [`DEMO` constant][crate::DEMO] illustrates and discusses the syntax expected by the parser.
 
 crate::prelude!();
 
 use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
-use trans::{Decls, Sys};
+use trans::Decls;
+
+#[cfg(feature = "parser")]
+use trans::Sys;
+
+mod ast;
+pub mod kw;
+
+#[cfg(all(test, feature = "parser"))]
+mod test;
+
+pub use ast::*;
+
+/// Yields `true` if `ident` is a keyword.
+pub fn is_kw(ident: impl AsRef<str>) -> bool {
+    kw::all.contains(ident.as_ref())
+}
+/// Fails if `ident` is a keyword.
+pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
+    let ident = ident.as_ref();
+    if is_kw(ident) {
+        Err(format!("illegal use of keyword `{}`", ident))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "parser")]
+peg::parser! {
+    /// PEG parsing rules, requires the `parser` feature.
+    pub grammar rules() for str {
+        /// Whitespace.
+        pub rule whitespace() = quiet! {
+            [ ' ' | '\n' | '\t' ]
+        }
+
+        /// Comment.
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::comment;
+        ///
+        /// // Recognizes rust-style comments.
+        /// assert_eq!(comment("// some comment\n"), Ok(()));
+        /// assert_eq!(comment("// some comment"), Ok(()));
+        ///
+        /// // Rejects rust-style outer/inner comments.
+        /// assert_eq!(
+        ///     comment("/// outer doc comment").unwrap_err().to_string(),
+        ///     "error at 1:1: expected non-documentation comment",
+        /// );
+        /// assert_eq!(
+        ///     comment("//! outer doc comment").unwrap_err().to_string(),
+        ///     "error at 1:1: expected non-documentation comment",
+        /// );
+        /// ```
+        pub rule comment() = quiet! {
+            // Rust-style.
+            "//"
+            // Do not match inner/outer documentation.
+            [^ '/' | '!' | '\n' ]*
+            // Newline or EOI.
+            ("\n" / ![_])
+        }
+        / expected!("non-documentation comment")
+
+        /// Whitespace or comment.
+        rule _() = quiet! { ( whitespace() / comment() )* }
+
+        /// Outer comments.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::outer_doc;
+        /// let input = "\t/// Some\n\t/// comments\n";
+        /// let cmts = outer_doc(input).unwrap();
+        /// assert_eq!(cmts, vec!["Some".to_string(), "comments".to_string()]);
+        /// ```
+        pub rule outer_doc() -> Vec<&'input str>
+        = quiet! {
+            (_ "///" $(" ")? line:$([^'\n']*) ("\n" / ![_]) { line })*
+        }
+        // / expected!("outer documentation")
+
+        /// Inner comments.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::inner_doc;
+        /// let input = "\t//! Some\n\t//! comments\n";
+        /// let cmts = inner_doc(input).unwrap();
+        /// assert_eq!(cmts, vec!["Some".to_string(), "comments".to_string()]);
+        /// ```
+        pub rule inner_doc() -> Vec<&'input str>
+        = quiet! {
+            (_ "//!" $(" ")? line:$([^'\n']*) ("\n" / ![_]) { line })*
+        }
+        // / expected!("inner documentation")
+
+        /// Ident parsing.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::ident;
+        /// // Regular idents are okay.
+        /// assert_eq!(*ident("v_1").unwrap(), "v_1");
+        /// assert_eq!(*ident("my_var_7").unwrap(), "my_var_7");
+        ///
+        /// // Cannot start with a digit.
+        /// assert_eq!(
+        ///     ident("0_illegal").unwrap_err().to_string(),
+        ///     "error at 1:1: expected identifier",
+        /// );
+        ///
+        /// // Cannot have weird SMT-LIB characters in unquoted identifiers.
+        /// let not_legal = [
+        ///     '~', '!', '@', '$', '%', '^', '&', '*',
+        ///     '-', '+', '=', '<', '>', '.', '?', '/',
+        /// ];
+        /// let legal_ident = "v_";
+        /// assert_eq!(*ident(legal_ident).unwrap(), legal_ident);
+        /// for c in &not_legal {
+        ///     let illegal = format!("{}{}", legal_ident, c);
+        ///     assert!(ident(&illegal).is_err());
+        /// }
+        ///
+        /// // Quoted idents can contain anything but '|' and '\'.
+        /// let id = "|\n + ~ ! so free - = <> 😸 /? @^  \n\n /// |";
+        /// assert_eq!(*ident(id).unwrap(), id);
+        /// ```
+        pub rule ident() -> Spn<&'input str>
+        = quiet! {
+            s:position!()
+            ident:$(
+                // Unquoted ident, notice it's a bit different from SMT-LIB.
+                [ 'a'..='z' | 'A'..='Z' | '_' ]
+                [ 'a'..='z' | 'A'..='Z' | '_' | '0'..='9' ]*
+            )
+            e:position!() {?
+                if is_kw(ident) {
+                    Err("unexpected keyword")
+                } else {
+                    Ok(Spn::new(ident, (s, e)))
+                }
+            }
+            // Quoted ident.
+            /
+            s:position!()
+            ident:$( "|" [^ '|' | '\\']* "|" )
+            e:position!() {?
+                if is_kw(ident) {
+                    Err("unexpected keyword")
+                } else {
+                    Ok(Spn::new(ident, (s, e)))
+                }
+            }
+        }
+        // Error message.
+        / expected!("identifier")
+
+
+        /// Parses boolean constants.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::bool;
+        /// assert!(*bool("true").unwrap());
+        /// assert!(*bool("⊤").unwrap());
+        /// assert!(!*bool("false").unwrap());
+        /// assert!(!*bool("⊥").unwrap());
+        /// ```
+        pub rule bool() -> Spn<bool>
+        = s:position!() ("true" / "⊤") e:position!() { Spn::new(true, (s, e)) }
+        / s:position!() ("false" / "⊥") e:position!() { Spn::new(false, (s, e)) }
+
+        /// Recognizes numbers: `0` and `[1-9][0-9]*`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::number;
+        /// let n = "0";
+        /// assert_eq!(*number(n).unwrap(), n);
+        /// let n = "72054324";
+        /// assert_eq!(*number(n).unwrap(), n);
+        pub rule number() -> Spn<&'input str>
+        = s:position!() n:$("0" / ['1'..='9']['0'..='9']*) e:position!() {
+            Spn::new(n, (s, e))
+        }
+        /// Same as [`number`] but generates an [`Int`].
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{prelude::Int, trans::Decls, parse::rules::int_number};
+        /// let n = 0;
+        /// assert_eq!(*int_number(&n.to_string()).unwrap(), Int::from(n));
+        /// let n = 72054324;
+        /// assert_eq!(*int_number(&n.to_string()).unwrap(), Int::from(n));
+        pub rule int_number() -> Spn<Int>
+        = digits:number() {?
+            digits.res_map(|digits|
+                Int::parse_bytes(digits.as_bytes(), 10)
+                    .ok_or("illegal unsigned integer")
+            )
+        }
+
+        /// Parses an unsigned [`Int`], cannot be followed by a `.`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{parse::rules::uint, prelude::Int};
+        /// let n = 0;
+        /// assert_eq!(*uint(&n.to_string()).unwrap(), Int::from(n));
+        /// let n = 72054324;
+        /// assert_eq!(*uint(&n.to_string()).unwrap(), Int::from(n));
+        ///
+        /// // Cannot be followed by a `.`.
+        /// let n = "72054324.";
+        /// assert_eq!(
+        ///     uint(n).unwrap_err().to_string(),
+        ///     "error at 1:1: expected integer"
+        /// );
+        /// ```
+        pub rule uint() -> Spn<Int>
+        = quiet! {
+            res:int_number() !['.'] { res }
+        }
+        / expected!("integer")
+
+
+        /// Parses an unsigned [`Int`], cannot be followed by a `.`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::{parse::rules::decimal, prelude::{Int, Rat}};
+        /// let n = 0.0;
+        /// # println!("{:.0}.", n);
+        /// assert_eq!(*decimal(&format!("{:.0}.", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// # println!("{:.1}", n);
+        /// assert_eq!(*decimal(&format!("{:.1}", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// # println!("{:.7}", n);
+        /// assert_eq!(*decimal(&format!("{:.7}", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// let n = 546205420374.0;
+        /// # println!("{:.0}.", n);
+        /// assert_eq!(*decimal(&format!("{:.0}.", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// # println!("{:.1}", n);
+        /// assert_eq!(*decimal(&format!("{:.1}", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// # println!("{:.7}", n);
+        /// assert_eq!(*decimal(&format!("{:.7}", n)).unwrap(), Rat::from_float(n).unwrap());
+        /// let n = 72054324.54205;
+        /// # println!("{}", n);
+        /// assert_eq!(
+        ///     *decimal(&format!("{}", n)).unwrap(),
+        ///     Rat::new((7205432454205 as u64).into(), 100000.into()),
+        /// );
+        /// # println!("{}00000000", n);
+        /// assert_eq!(
+        ///     *decimal(&format!("{}00000000", n)).unwrap(),
+        ///     Rat::new((7205432454205 as u64).into(), 100000.into()),
+        /// );
+        /// ```
+        pub rule decimal() -> Spn<Rat>
+        = quiet! {
+            s:position!()
+            n:int_number()
+            "."
+            d:$(['0'..='9']*)
+            e:position!() {?
+                let n = n.inner;
+                let mut numer = n;
+                let mut denom = Int::one();
+                if !d.is_empty() {
+                    let d_len = d.len();
+                    let d = Int::parse_bytes(d.as_bytes(), 10).ok_or("illegal decimal")?;
+                    for _ in 0..d_len {
+                        numer = numer * 10;
+                        denom = denom * 10;
+                    }
+                    numer = numer + d;
+                }
+                let rat = Rat::new(numer, denom);
+
+                Ok(Spn::new(rat, (s, e)))
+            }
+        }
+        / expected!("decimal number")
+
+        /// Parses constants.
+        pub rule cst() -> Spn<Cst>
+        = quiet! {
+            rat:decimal() {
+                rat.map(Cst::R)
+            }
+            / int:uint() {
+                int.map(Cst::I)
+            }
+            / b:bool() {
+                b.map(Cst::B)
+            }
+        }
+        / expected!("int/rat/bool constant")
+
+        /// Parses variables.
+        pub rule hsmt_var() -> Ast<'input>
+        = quiet! {
+            prime:(
+                ps:position!() "'" pe:position!() {
+                    Span::from((ps, pe))
+                }
+            )? var:ident() {
+                Ast::svar(var, prime)
+            }
+        }
+        / expected!("(un)primed state variable")
+
+        /// Parses an if-then-else.
+        ///
+        /// No parens needed, for documentation see [`hsmt`].
+        pub rule hsmt_ite() -> Ast<'input>
+        = quiet! {
+            s:position!() "if" e:position!()
+            _ cnd:hsmt()
+            _ "{"
+            _ thn:hsmt()
+            _ "}"
+            _ elseif:(
+                "else" _ s:position!() "if" e:position!() _ cnd:hsmt() _ "{" _ thn:hsmt() _ "}" {
+                    (Span::new(s, e), cnd, thn)
+                }
+            )*
+            _ "else" _ "{"
+            _ els:hsmt()
+            _ "}" {
+                let ite = Op::Ite;
+                let els = elseif.into_iter().rev().fold(
+                    els,
+                    |els, (if_span, cnd, thn)| Ast::app(Spn::new(ite, if_span), vec![cnd, thn, els]),
+                );
+                Ast::app(Spn::new(Op::Ite, (s,e)), vec![cnd, thn, els])
+            }
+        }
+        / expected!("if-then-else")
+
+        /// Parses polymorphic expressions.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::hsmt;
+        /// let ast = hsmt(
+        ///     "if a ⋀ n ≥ 10 { 'n = n - 1 } \
+        ///     else if false { 'n > n } \
+        ///     else { false }"
+        /// ).unwrap();
+        /// assert_eq!(
+        ///     ast.to_string(),
+        ///     "\
+        ///         if (a ⋀ (n ≥ 10)) { \
+        ///             ('n = (n - 1)) \
+        ///         } else if false { \
+        ///             ('n > n) \
+        ///         } else { false }\
+        ///     ",
+        /// )
+        /// ```
+        ///
+        /// ```rust
+        /// use mikino_api::parse::rules::hsmt;
+        /// let ast = hsmt(
+        ///     "a ⋀ x ≥ 7 - m ⋁ if 7 = n + m { b_1 ⋁ b_2 } else { c }"
+        /// ).unwrap();
+        /// assert_eq!(
+        ///     ast.to_string(),
+        ///     "\
+        ///         ((a ⋀ (x ≥ (7 - m))) \
+        ///         ⋁ if (7 = (n + m)) { (b_1 ⋁ b_2) } else { c })\
+        ///     ",
+        /// )
+        /// ```
+        pub rule hsmt() -> Ast<'input>
+        = ast:precedence! {
+            // Implication, right associative.
+            lft:@ _ s:position!() (
+                "=>" / "⇒" / "→" / "⊃"
+             ) e:position!() _ rgt:(@) {
+                Ast::binapp(Spn::new(Op::Implies, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() (
+                "∨" / "⋁" / "||" / "and"
+             ) e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() (
+                "∧" / "⋀" / "&&" / "or"
+            ) e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "<" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Lt, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() ("<=" / "≤") e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Le, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() (">=" / "≥") e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Ge, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() ">" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Gt, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "=" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Eq, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "+" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Add, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "-" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Sub, (s, e)), lft, rgt)
+            }
+            --
+            lft:(@) _ s:position!() "*" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Mul, (s, e)), lft, rgt)
+            }
+            lft:(@) _ s:position!() "/" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Div, (s, e)), lft, rgt)
+            }
+            --
+            s:position!() ("¬" / "!" / "not") e:position!() _ arg:@ {
+                Ast::unapp(Spn::new(Op::Not, (s, e)), arg)
+            }
+            s:position!() "-" e:position!() _ arg:@ {
+                Ast::unapp(Spn::new(Op::Sub, (s, e)), arg)
+            }
+            --
+            ite:hsmt_ite() {
+                ite
+            }
+            var:hsmt_var() {
+                var
+            }
+            cst:cst() {
+                Ast::cst(cst)
+            }
+            "(" _ e:hsmt() _ ")" {
+                let mut e = e;
+                e.close();
+                e
+            }
+        }
+
+        /// Parses a type.
+        ///
+        /// Can be `int`, `rat`, or `bool`.
+        pub rule hsmt_typ() -> expr::Typ
+        = quiet! {
+            "int" { expr::Typ::Int }
+            / "rat" { expr::Typ::Rat }
+            / "bool" { expr::Typ::Bool }
+        }
+        / expected!("a type (`int`, `rat` or `bool`")
+
+        /// Parses a state declaration.
+        ///
+        /// A state declaration is a list of `<ident> : <type>`. No separator is needed. For
+        /// convenience, state variables with the same type can be listed together, separated
+        /// by `,`, before the `: <type>`. For instance, `v_1, v_2, v_3: int`.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::state;
+        /// let input = "\
+        ///     n_1 : int
+        ///     b_1 : bool
+        ///     // Avoid putting declarations on the same line, it looks bad.
+        ///     n_2: int b_2 : bool
+        ///     // Aggregated declaration.
+        ///     n_3, n_4, n_5: int
+        ///     p, q: bool\
+        /// ";
+        /// let decls = state(input).unwrap().unwrap();
+        /// assert_eq!(
+        ///     decls.to_string(),
+        ///     // State-declaration-printing sorts and aggregates idents alphabetically.
+        ///     "\
+        /// b_1, b_2: bool
+        /// n_1, n_2, n_3, n_4, n_5: int
+        /// p, q: bool\
+        ///     "
+        /// );
+        /// ```
+        pub rule state() -> PRes<trans::Decls>
+        = state:(
+            quiet! {
+                svar_doc:outer_doc()
+                _
+                svar:ident()
+                svars:(
+                    _ ","
+                    svar_doc:outer_doc()
+                    _ id:ident() {
+                        id
+                    }
+                )*
+                _ ":" _ svars_typ:hsmt_typ() {
+                    (svar, svars, svars_typ)
+                }
+            }
+            / expected!(r#"list of "<ident>, <ident>, ... : <type>""#)
+        )+ {
+            let mut decls = trans::Decls::new();
+            for (svar, svars, typ) in state {
+                for svar in Some(svar).into_iter().chain(svars) {
+                    let prev = decls.register(svar.inner, typ);
+                    if prev.is_some() {
+                        return Err(PError::new(
+                            format!("variable `{}` is already declared", svar.inner),
+                            svar.span
+                        ));
+                    }
+                }
+            }
+            Ok(decls)
+        }
+
+        /// Parses some candidates.
+        ///
+        /// Accepts a list of name/expression pairs of the form `<name> : <expr>` (no separator).
+        /// Names are double-quoted `"..."` strings and must all be distinct. Expressions have to
+        /// be stateless (no `'` prime).
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// # use mikino_api::parse::rules::candidates;
+        /// let input = r#"
+        ///     "some candidate": x ≥ 0
+        ///     "another one": x ≥ y + 2 ⋁ y ≥ -7
+        ///     "tautology": p ⋁ ¬p"#;
+        /// let mut candidates = candidates(input).unwrap().into_iter();
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "some candidate");
+        /// assert_eq!(expr.to_string(), "(x ≥ 0)");
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "another one");
+        /// assert_eq!(expr.to_string(), "((x ≥ (y + 2)) ⋁ (y ≥ (-7)))");
+        ///
+        /// let (name, expr) = candidates.next().unwrap();
+        /// assert_eq!(*name, "tautology");
+        /// assert_eq!(expr.to_string(), "(p ⋁ (¬p))");
+        /// ```
+        pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
+        = quiet! {
+            (
+                _ s:position!() name:(
+                    "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
+                ) e:position!() _ ":" _
+                expr:hsmt() {
+                    (Spn::new(name, (s, e)), expr)
+                }
+            )+
+        }
+        / expected!(r#"list of "<name> : <expr>" where <name> is a double-quoted string"#)
+
+        /// Parses a full instance.
+        ///
+        /// Same documentation as [the `sys` function][super::sys].
+        pub rule hsmt_sys() -> PRes<trans::Sys>
+        =
+        sys_doc:inner_doc()
+
+        state_doc:outer_doc()
+        _ "state" _ "{" _ decls:state() _ "}"
+        state_doc:outer_doc()
+        _ "init" _ "{" _ init:(
+            quiet! { hsmt() }
+            / expected!("stateless expression")
+         ) _  "}"
+        state_doc:outer_doc()
+        _ "trans" _ "{" _ trans:(
+            quiet! { hsmt() }
+            / expected!("stateful expression")
+         ) _ "}"
+        state_doc:outer_doc()
+        _ "candidates" _ "{" _ candidates:candidates() _ "}"
+        _ {
+            let decls = decls?;
+            let init = init.to_expr(&decls)?;
+            let trans = trans.to_sexpr(&decls)?;
+
+            let mut pos = Map::new();
+
+            for (name, expr) in candidates {
+                let candidate = expr.to_expr(&decls).map_err(|e| e.chain_err(|| format!("in candidate `{}`", name.inner)))?;
+                let prev =  pos.insert(name.inner.to_string(), candidate);
+                if prev.is_some() {
+                    return Err(PError::new("a candidate with this name is already defined", name.span))
+                }
+            }
+
+            Ok(trans::Sys::new(decls, init, trans, pos))
+        }
+    }
+}
+
+/// Parses a system, requires the `parser` feature.
+///
+/// Comments are one-line rust-style: `// ..\n`.
+///
+/// A system is composed of four `{ ... }` blocks each starting with a specific keyword:
+///
+/// - `state { ... }`: the [state variables][rules::state] of the system;
+///
+/// - `init { ... }`: the initial predicate, *i.e.* a stateless (no `'` prime) expression;
+///
+/// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
+///
+/// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
+#[cfg(feature = "parser")]
+pub fn sys(txt: &str) -> Res<Sys> {
+    let res: Res<Sys> = match rules::hsmt_sys(txt) {
+        Ok(res) => match res {
+            Ok(sys) => Ok(sys),
+            Err(e) => {
+                println!("perror");
+                let span = e.span;
+                let (prev, row, col, line, next) = span.pretty_of(txt);
+                let err = Error::parse("", row, col, line, prev, next);
+                Err(err.extend(e.error.into_iter()))
+            }
+        },
+        Err(e) => {
+            println!("peg parse error");
+            let span = Span::new(e.location.offset, e.location.offset);
+            let (prev, row, col, line, next) = span.pretty_of(txt);
+            let err = Error::parse("", row, col, line, prev, next);
+            Err(err.chain_err(|| format!("expected {}", e.expected)))
+        }
+    };
+    res.chain_err(|| "run mikino in 'demo' mode for more details about the syntax")
+}
 
 /// Parses its input text.
 pub struct Parser<'txt> {
@@ -31,19 +684,20 @@ impl<'txt> Parser<'txt> {
     }
 
     /// Fails at some position.
-    pub fn fail_at(&self, pos: usize, msg: impl std::fmt::Display) -> Error {
-        let (line, row, col) = match self.pretty_pos(pos) {
-            Ok(res) => res,
-            Err(e) => {
-                return e
-                    .chain_err(|| format!("while retrieving pretty position @{}: `{}`", pos, msg))
-            }
-        };
-        ErrorKind::ParseErr(row, col, line, msg.to_string()).into()
+    pub fn fail_at(&self, pos: usize, msg: impl Into<String>) -> Error {
+        let (prev, row, col, line, next) = Span::new(pos, pos).pretty_of(self.txt);
+        Error::Parse {
+            msg: msg.into(),
+            prev,
+            row,
+            col,
+            line,
+            next,
+        }
     }
 
     /// Fails at the current position.
-    pub fn fail(&self, msg: impl std::fmt::Display) -> Error {
+    pub fn fail(&self, msg: impl Into<String>) -> Error {
         self.fail_at(self.cursor, msg)
     }
 
@@ -58,7 +712,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::Parser;
+    /// # use mikino_api::{trans::Decls, parse::Parser};
     /// let mut parser = Parser::new("\nsome text\n\t\th");
     /// let (line, col, row) = parser.pretty_pos(13).unwrap();
     /// # println!("line: `{}`, col: {}, row: {}", line, col, row);
@@ -109,7 +763,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(|_| false, true);
@@ -125,7 +779,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -140,7 +794,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff\non several\n// lines";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -167,7 +821,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = " \n\n  \r token";
     /// let mut parser = Parser::new(txt);
     /// parser.ws();
@@ -193,7 +847,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "// a single line comment\n  some more stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.cmt();
@@ -217,7 +871,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "  \n  // A comment // nested\n   \r // comment\n  some stuff";
     /// let mut parser = Parser::new(txt);
     /// parser.ws_cmt();
@@ -241,7 +895,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// parser.parse_until(char::is_whitespace, true);
@@ -276,7 +930,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// assert!(parser.try_tag("some"));
@@ -305,7 +959,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some stuff: followed by more things";
     /// let mut parser = Parser::new(txt);
     /// assert!(parser.tag("some").is_ok());
@@ -327,7 +981,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "my_identifier 470not_an_identifier legal_id";
     /// let mut parser = Parser::new(txt);
     /// assert_eq!(parser.try_id().unwrap(), "my_identifier");
@@ -357,7 +1011,7 @@ impl<'txt> Parser<'txt> {
     /// Parses an identifier.
     pub fn id(&mut self) -> Res<&'txt str> {
         self.try_id()
-            .ok_or_else(|| self.fail("expected an identifier"))
+            .ok_or_else(|| self.fail("expected an identifier").into())
     }
 
     /// Tries to parse an integer.
@@ -365,7 +1019,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "integer: 72 and more tokens";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -418,7 +1072,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "integer: (/ 72 11) and more tokens";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -488,7 +1142,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// let txt = "some noise:true   // comments\nfalse";
     /// # println!("txt: `{}`", txt);
     /// let mut parser = Parser::new(txt);
@@ -518,7 +1172,7 @@ impl<'txt> Parser<'txt> {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::parse::*;
+    /// # use mikino_api::{trans::Decls, parse::*};
     /// # use mikino_api::expr::*;
     /// let txt = "7405,(/ 7 103),false";
     /// let mut parser = Parser::new(txt);
@@ -639,7 +1293,10 @@ impl<'txt> Parser<'txt> {
     /// Parses a stateless/stateful expression.
     ///
     /// Stackless.
-    pub fn pexpr<V>(&mut self, parse_var: impl Fn(&mut Self) -> Res<Option<V>>) -> Res<PExpr<V>> {
+    pub fn pexpr<V>(&mut self, parse_var: impl Fn(&mut Self) -> Res<Option<V>>) -> Res<PExpr<V>>
+    where
+        V: HasTyp,
+    {
         let mut stack: Vec<(Op, Vec<PExpr<V>>)> = vec![];
 
         'go_down_applications: loop {
@@ -664,7 +1321,7 @@ impl<'txt> Parser<'txt> {
 
                 if self.try_tag(")") {
                     self.ws_cmt();
-                    expr = PExpr::new_op(op, args);
+                    expr = PExpr::new_op(op, args).map_err(|e| e.force_source(self.fail("")))?;
                     continue 'go_up_stack;
                 } else {
                     stack.push((op, args));
@@ -673,129 +1330,6 @@ impl<'txt> Parser<'txt> {
             }
 
             return Ok(expr);
-        }
-    }
-
-    /// Parses some declarations.
-    pub fn decls(&mut self) -> Res<()> {
-        self.tag("vars")
-            .chain_err(|| "starting declaration block")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "before declaration block")?;
-        self.ws_cmt();
-        self.tag("(").chain_err(|| "starting declaration block")?;
-        self.ws_cmt();
-
-        #[allow(unused_labels)]
-        'parse_decls: while !self.try_tag(")") {
-            let mut ids = vec![(
-                self.cursor,
-                self.id()
-                    .chain_err(|| "or `)` closing variable declarations")?,
-            )];
-            self.ws_cmt();
-            while self.try_tag(",") {
-                self.ws_cmt();
-                ids.push((self.cursor, self.id().chain_err(|| "after `,`")?));
-                self.ws_cmt();
-            }
-            self.tag(":")
-                .chain_err(|| "between identifier(s) and type")?;
-            self.ws_cmt();
-            let typ = self.typ()?;
-            for (start, id) in ids {
-                let prev = self.decls.register(id, typ);
-                if prev.is_some() {
-                    bail!(self.fail_at(start, format!("trying to re-define variable `{}`", id)))
-                }
-            }
-            self.ws_cmt();
-        }
-
-        Ok(())
-    }
-
-    /// Parses the initial state predicate.
-    pub fn init(&mut self) -> Res<Expr> {
-        self.tag("init").chain_err(|| "starting init predicate")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "starting init predicate")?;
-        self.ws_cmt();
-        self.expr()
-    }
-
-    /// Parses the initial state predicate.
-    pub fn trans(&mut self) -> Res<SExpr> {
-        self.tag("trans")
-            .chain_err(|| "starting transition predicate")?;
-        self.ws_cmt();
-        self.tag(":")
-            .chain_err(|| "starting transition predicate")?;
-        self.ws_cmt();
-        self.sexpr()
-    }
-
-    /// Parses the proof obligations of the system.
-    pub fn po_s(&mut self) -> Res<Map<String, Expr>> {
-        self.tag("po_s")
-            .chain_err(|| "starting the list of proof obligations")?;
-        self.ws_cmt();
-        self.tag(":").chain_err(|| "before proof obligation list")?;
-        self.ws_cmt();
-        self.tag("(")
-            .chain_err(|| "opening proof obligation list")?;
-        self.ws_cmt();
-        let mut map = Map::new();
-        let mut po_start;
-
-        while {
-            po_start = self.cursor;
-            self.try_tag("\"")
-        } {
-            let po_name = self.parse_until(|c| c == '"', false).trim();
-            self.tag("\"")
-                .chain_err(|| "closing proof obligation name")?;
-            self.ws_cmt();
-            self.tag(":")
-                .chain_err(|| "between proof obligation name and its definition")?;
-            self.ws_cmt();
-            let def = self.expr().chain_err(|| {
-                format!(
-                    "while parsing definition for proof obligation `{}`",
-                    po_name
-                )
-            })?;
-            let prev = map.insert(po_name.into(), def);
-            if prev.is_some() {
-                bail!(self.fail_at(
-                    po_start,
-                    format!("illegal re-definition of proof obligation `{}`", po_name),
-                ))
-            }
-            self.ws_cmt();
-        }
-
-        self.tag(")")
-            .chain_err(|| "closing proof obligation list")?;
-
-        Ok(map)
-    }
-
-    /// Parses a full system.
-    pub fn sys(mut self) -> Res<Sys> {
-        self.ws_cmt();
-        self.decls()?;
-        self.ws_cmt();
-        let init = self.init()?;
-        self.ws_cmt();
-        let trans = self.trans()?;
-        self.ws_cmt();
-        let po_s = self.po_s()?;
-        self.ws_cmt();
-        if !self.is_at_eoi() {
-            bail!(self.fail("expected end of file"))
-        } else {
-            Ok(Sys::new(self.decls, init, trans, po_s))
         }
     }
 }

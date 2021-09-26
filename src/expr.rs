@@ -4,6 +4,9 @@ crate::prelude!();
 
 use rsmt2::print::{Expr2Smt, Sort2Smt, Sym2Smt};
 
+#[cfg(test)]
+mod test;
+
 pub use crate::{build_expr as build, build_typ};
 
 /// A type.
@@ -53,6 +56,14 @@ impl Typ {
     pub fn rat() -> Self {
         Self::Rat
     }
+
+    /// True if the type is an arithmetic one.
+    pub fn is_arith(self) -> bool {
+        match self {
+            Self::Bool => false,
+            Self::Int | Self::Rat => true,
+        }
+    }
 }
 impl Sort2Smt for Typ {
     fn sort_to_smt2<W: Write>(&self, w: &mut W) -> SmtRes<()> {
@@ -69,6 +80,43 @@ impl Sort2Smt for Typ {
     }
 }
 
+/// Operator precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Precedence {
+    /// Maximal precedence.
+    Max,
+    /// Numeric precedence.
+    Some(usize),
+}
+impl Precedence {
+    /// Constructor.
+    pub const fn new(precedence: usize) -> Self {
+        Self::Some(precedence)
+    }
+    /// Maximal precedence.
+    pub const fn max() -> Self {
+        Self::Max
+    }
+}
+impl PartialOrd for Precedence {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering::*;
+        match self {
+            Self::Max => {
+                if *other == Self::Max {
+                    Some(Equal)
+                } else {
+                    Some(Greater)
+                }
+            }
+            Self::Some(self_prec) => match other {
+                Self::Max => Some(Less),
+                Self::Some(other_prec) => self_prec.partial_cmp(other_prec),
+            },
+        }
+    }
+}
+
 /// Constants.
 ///
 /// Currently only booleans, integers and rationals are supported.
@@ -80,6 +128,15 @@ pub enum Cst {
     I(Int),
     /// Rational constant.
     R(Rat),
+}
+impl HasTyp for Cst {
+    fn typ(&self) -> Typ {
+        match self {
+            Self::B(_) => Typ::Bool,
+            Self::I(_) => Typ::Int,
+            Self::R(_) => Typ::Rat,
+        }
+    }
 }
 impl Cst {
     /// Creates a boolean constant.
@@ -109,20 +166,37 @@ impl Expr2Smt<()> for Cst {
 /// Operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
+    /// If-then-else.
     Ite,
+    /// Logical implication.
     Implies,
+    /// Addition.
     Add,
+    /// Subtraction.
     Sub,
+    /// Multiplication.
     Mul,
+    /// Division.
     Div,
+    /// Integer division.
+    IDiv,
+    /// Modulo.
     Mod,
+    /// Greater than or equal to.
     Ge,
+    /// Less than or equal to.
     Le,
+    /// Greater than.
     Gt,
+    /// Less than.
     Lt,
+    /// Equal to.
     Eq,
+    /// Logical negation.
     Not,
+    /// Logical conjunction.
     And,
+    /// Logical disjunction.
     Or,
 }
 impl Op {
@@ -146,6 +220,7 @@ impl Op {
             "-" => Sub,
             "*" => Mul,
             "/" => Div,
+            "div" => IDiv,
             "mod" => Mod,
             ">=" | "≥" => Ge,
             "<=" | "≤" => Le,
@@ -158,6 +233,236 @@ impl Op {
             _ => return None,
         };
         Some(res)
+    }
+
+    /// Human-SMT string representation.
+    pub fn hsmt_str(self) -> &'static [&'static str] {
+        match self {
+            Self::Ite => &["if", "then", "else"],
+            Self::Implies => &["⇒"],
+            Self::Add => &["+"],
+            Self::Sub => &["-"],
+            Self::Mul => &["*"],
+            Self::Div => &["/"],
+            Self::IDiv => &["/"],
+            Self::Mod => &["%"],
+            Self::Ge => &["≥"],
+            Self::Le => &["≤"],
+            Self::Gt => &[">"],
+            Self::Lt => &["<"],
+            Self::Eq => &["="],
+            Self::Not => &["¬"],
+            Self::And => &["⋀"],
+            Self::Or => &["⋁"],
+        }
+    }
+
+    /// Human-SMT string representation.
+    pub fn smt_str(self) -> &'static str {
+        match self {
+            Self::Ite => "ite",
+            Self::Implies => "=>",
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::IDiv => "/",
+            Self::Mod => "%",
+            Self::Ge => "≥",
+            Self::Le => "≤",
+            Self::Gt => ">",
+            Self::Lt => "<",
+            Self::Eq => "=",
+            Self::Not => "¬",
+            Self::And => "⋀",
+            Self::Or => "⋁",
+        }
+    }
+
+    /// True if `self` is an arithmetic relation.
+    pub fn is_arith_relation(self) -> bool {
+        match self {
+            Self::Ge | Self::Le | Self::Gt | Self::Lt => true,
+            Self::Ite
+            | Self::Implies
+            | Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::IDiv
+            | Self::Mod
+            | Self::Eq
+            | Self::Not
+            | Self::And
+            | Self::Or => false,
+        }
+    }
+
+    /// Minimal arity of `self`.
+    pub fn min_arity(self) -> usize {
+        match self {
+            Self::Not | Self::Add | Self::Sub => 1,
+            Self::Mod
+            | Self::Mul
+            | Self::Div
+            | Self::IDiv
+            | Self::And
+            | Self::Or
+            | Self::Implies
+            | Self::Eq
+            | Self::Le
+            | Self::Lt
+            | Self::Ge
+            | Self::Gt => 2,
+            Self::Ite => 3,
+        }
+    }
+
+    /// Maximal arity for `self`, `None` if infinite.
+    pub fn max_arity(self) -> Option<usize> {
+        match self {
+            Self::Not => Some(1),
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::And
+            | Self::Or
+            | Self::Implies
+            | Self::Eq
+            | Self::Le
+            | Self::Lt
+            | Self::Ge
+            | Self::Gt => None,
+            Self::Mod | Self::Div | Self::IDiv => Some(2),
+            Self::Ite => Some(3),
+        }
+    }
+
+    /// True if the operator is left associative.
+    pub fn is_left_associative(self) -> bool {
+        match self {
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::And
+            | Self::Or
+            | Self::Implies
+            | Self::Eq
+            | Self::Le
+            | Self::Lt
+            | Self::Ge
+            | Self::Gt => true,
+            Self::Not | Self::Mod | Self::Div | Self::IDiv | Self::Ite => false,
+        }
+    }
+
+    /// Type-checks an operator application.
+    pub fn type_check<V: HasTyp>(self, args: &[PExpr<V>]) -> Res<Typ> {
+        if args.len() < self.min_arity() {
+            bail!(
+                "`{}` expects at least {} argument(s)",
+                self,
+                self.min_arity(),
+            )
+        }
+        if let Some(max) = self.max_arity() {
+            if args.len() > max {
+                bail!("`{}` expects at most {} argument(s)", self, max)
+            }
+        }
+
+        let typ = match self {
+            Self::Ite => {
+                let typ = args[0].typ();
+                if typ != Typ::Bool {
+                    bail!("expected first argument of type `bool`, got `{}`", typ)
+                }
+
+                let thn_typ = args[1].typ();
+                let els_typ = args[2].typ();
+
+                if thn_typ != els_typ {
+                    bail!(
+                        "`{}`'s second and third arguments should have the same type, got `{}` and `{}`",
+                        self, thn_typ, els_typ,
+                    )
+                }
+
+                thn_typ
+            }
+            Self::Implies | Self::And | Self::Or | Self::Not => {
+                if args.iter().any(|e| e.typ() != Typ::Bool) {
+                    bail!("`{}`'s arguments must all be boolean expressions", self)
+                }
+                Typ::Bool
+            }
+
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::IDiv
+            | Self::Mod
+            | Self::Le
+            | Self::Ge
+            | Self::Lt
+            | Self::Gt => {
+                let mut typs = args.iter().map(PExpr::typ);
+                let first = typs.next().expect("at least one argument");
+                if !first.is_arith() {
+                    bail!(
+                        "`{}`'s arguments must have an arithmetic type, unexpected type `{}`",
+                        self,
+                        first,
+                    )
+                }
+                for typ in typs {
+                    if typ != first {
+                        bail!(
+                            "`{}`'s arguments must all have the same type, found `{}` and `{}`",
+                            self,
+                            first,
+                            typ,
+                        )
+                    }
+                }
+                if (self == Self::IDiv || self == Self::Mod) && first != Typ::Int {
+                    bail!(
+                        "`{}` can only be applied to integer arguments, found `{}`",
+                        self,
+                        first,
+                    )
+                }
+
+                if self == Self::Div {
+                    Typ::Rat
+                } else if self == Self::Mod {
+                    Typ::Int
+                } else if self.is_arith_relation() {
+                    Typ::Bool
+                } else {
+                    first
+                }
+            }
+
+            Self::Eq => {
+                let mut typs = args.iter().map(PExpr::typ);
+                let first = typs.next().unwrap();
+                for typ in typs {
+                    if typ != first {
+                        bail!(
+                            "`{}`'s arguments must all have the same type, found `{}` and `{}`",
+                            self,
+                            first,
+                            typ,
+                        )
+                    }
+                }
+                Typ::Bool
+            }
+        };
+
+        Ok(typ)
     }
 }
 impl Expr2Smt<()> for Op {
@@ -172,6 +477,7 @@ impl Expr2Smt<()> for Op {
                 Self::Sub => "-",
                 Self::Mul => "*",
                 Self::Div => "/",
+                Self::IDiv => "div",
                 Self::Mod => "mod",
                 Self::Ge => ">=",
                 Self::Le => "<=",
@@ -185,6 +491,12 @@ impl Expr2Smt<()> for Op {
         )?;
         Ok(())
     }
+}
+
+/// Trait implemented by all variables.
+pub trait HasTyp: fmt::Display {
+    /// Type accessor.
+    fn typ(&self) -> Typ;
 }
 
 /// A stateless variable.
@@ -223,17 +535,18 @@ impl Var {
     pub fn id(&self) -> &str {
         &self.id
     }
-
+}
+impl HasTyp for Var {
     /// Type accessor.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::expr::{Var, Typ};
+    /// # use mikino_api::expr::{Var, Typ, HasTyp};
     /// let var = Var::new("v_1", Typ::Bool);
     /// assert_eq!(var.typ(), Typ::Bool);
     /// ```
-    pub fn typ(&self) -> Typ {
+    fn typ(&self) -> Typ {
         self.typ
     }
 }
@@ -260,12 +573,16 @@ pub struct SVar {
     nxt: bool,
 }
 impl SVar {
+    /// State variable constructor with a `next` flag.
+    pub fn new(var: Var, nxt: bool) -> Self {
+        Self { var, nxt }
+    }
     /// Constructor for next state variables.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::expr::{Var, SVar, Typ};
+    /// # use mikino_api::expr::{Var, SVar, Typ, HasTyp};
     /// let var = Var::new("v_1", Typ::Bool);
     /// let svar = SVar::new_next(var);
     /// assert_eq!(&svar.to_string(), "v_1@1");
@@ -273,7 +590,7 @@ impl SVar {
     /// assert_eq!(svar.typ(), Typ::Bool);
     /// ```
     pub fn new_next(var: Var) -> Self {
-        Self { var, nxt: true }
+        Self::new(var, true)
     }
 
     /// Constructor for current state variables.
@@ -281,7 +598,7 @@ impl SVar {
     /// # Examples
     ///
     /// ```rust
-    /// # use mikino_api::expr::{Var, SVar, Typ};
+    /// # use mikino_api::expr::{Var, SVar, Typ, HasTyp};
     /// let var = Var::new("v_1", Typ::Bool);
     /// let svar = SVar::new_curr(var);
     /// assert_eq!(&svar.to_string(), "v_1@0");
@@ -289,7 +606,7 @@ impl SVar {
     /// assert_eq!(svar.typ(), Typ::Bool);
     /// ```
     pub fn new_curr(var: Var) -> Self {
-        Self { var, nxt: false }
+        Self::new(var, false)
     }
 
     /// True if the state variable is a next state variable.
@@ -312,6 +629,11 @@ impl Sym2Smt<Unroll> for SVar {
     fn sym_to_smt2<W: Write>(&self, w: &mut W, step: Unroll) -> SmtRes<()> {
         write!(w, "{}@{}", self.id, if self.nxt { step + 1 } else { step })?;
         Ok(())
+    }
+}
+impl HasTyp for SVar {
+    fn typ(&self) -> Typ {
+        self.typ
     }
 }
 
@@ -355,6 +677,11 @@ impl<V> PExpr<V> {
         Self::Var(var)
     }
 
+    /// Constant constructor.
+    pub fn new_cst(cst: Cst) -> Self {
+        Self::Cst(cst)
+    }
+
     /// Operator application constructor.
     /// Variable constructor.
     ///
@@ -369,8 +696,52 @@ impl<V> PExpr<V> {
     /// let expr: PExpr<SVar> = PExpr::new_var(svar.clone());
     /// assert_eq!(expr, PExpr::Var(svar));
     /// ```
-    pub fn new_op(op: Op, args: Vec<Self>) -> Self {
-        PExpr::App { op, args }
+    pub fn new_op(op: Op, args: Vec<Self>) -> Res<Self>
+    where
+        V: HasTyp,
+    {
+        op.type_check(&args)?;
+        Ok(Self::simplify_app(op, args))
+    }
+
+    /// Simplifies the application of `op` to `args`, **non-recursively**.
+    fn simplify_app(op: Op, args: Vec<Self>) -> Self {
+        match (op, args.len()) {
+            (Op::Sub, 1) if args[0].is_cst() => match &args[0] {
+                Self::Cst(Cst::I(i)) => Cst::I(-i).into(),
+                Self::Cst(Cst::R(r)) => Cst::R(-r).into(),
+                Self::Cst(Cst::B(_)) => panic!("trying to apply `{}` to a boolean", op),
+                _ => Self::App { op, args },
+            },
+            (Op::Div, 2) if args[0].is_cst() && args[1].is_cst() => match (&args[0], &args[1]) {
+                (Self::Cst(Cst::I(lft)), Self::Cst(Cst::I(rgt))) => Cst::I(lft - rgt).into(),
+                (Self::Cst(Cst::R(lft)), Self::Cst(Cst::R(rgt))) => Cst::R(lft - rgt).into(),
+                _ => panic!("trying to apply `{}` to arguments of unexpected type", op),
+            },
+            _ => Self::App { op, args },
+        }
+    }
+
+    /// True if `self` is a constant.
+    pub fn is_cst(&self) -> bool {
+        match self {
+            Self::Cst(_) => true,
+            Self::Var(_) | Self::App { .. } => false,
+        }
+    }
+    /// True if `self` is a variable.
+    pub fn is_var(&self) -> bool {
+        match self {
+            Self::Var(_) => true,
+            Self::Cst(_) | Self::App { .. } => false,
+        }
+    }
+    /// True if `self` is an application.
+    pub fn is_app(&self) -> bool {
+        match self {
+            Self::App { .. } => true,
+            Self::Cst(_) | Self::Var(_) => false,
+        }
     }
 
     /// Negation of a reference to an expression.
@@ -379,6 +750,18 @@ impl<V> PExpr<V> {
     /// clone, and want to assert the negation.
     pub fn negated(&self) -> NotPExpr<V> {
         self.into()
+    }
+}
+impl<V: HasTyp> HasTyp for PExpr<V> {
+    fn typ(&self) -> Typ {
+        match self {
+            Self::Var(var) => var.typ(),
+            Self::Cst(cst) => cst.typ(),
+            Self::App { op, args } => match op.type_check(args) {
+                Ok(typ) => typ,
+                Err(e) => panic!("illegal operator application `{}`: {}", self, e),
+            },
+        }
     }
 }
 impl<Info: Copy, V: Sym2Smt<Info>> Expr2Smt<Info> for PExpr<V> {
@@ -469,6 +852,7 @@ mod trait_impls {
                 Self::Sub => write!(fmt, "-"),
                 Self::Mul => write!(fmt, "*"),
                 Self::Div => write!(fmt, "/"),
+                Self::IDiv => write!(fmt, "div"),
                 Self::Mod => write!(fmt, "%"),
                 Self::Ge => write!(fmt, ">="),
                 Self::Le => write!(fmt, "<="),

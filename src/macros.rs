@@ -77,3 +77,78 @@ macro_rules! build_typ {
         $crate::expr::Typ::Rat
     };
 }
+
+/// Builds some declarations.
+#[macro_export]
+macro_rules! build_decls {
+    {
+        $( $($ident:ident),* $(,)* : $typ:tt )*
+    } => {{
+        let mut decls: $crate::prelude::Res<$crate::trans::Decls> = Ok($crate::trans::Decls::new());
+        $(
+            decls = decls.and_then(|mut decls| {
+                $(
+                    let prev = decls.register(stringify!($ident), $crate::build_typ!($typ));
+                    if prev.is_some() {
+                        bail!("found multiple definitions of identifier `{}`", stringify!($ident))
+                    }
+                )*
+                Ok(decls)
+            });
+        )*
+        decls
+    }};
+}
+
+// /// Builds some variable declarations.
+// #[macro_export]
+// macro_rules! build_decls {
+//     (@$decls:expr,) => {};
+
+//     (@$decls:expr, $($ident:ident),* $(,)? : $typ:tt $($tail:tt)*) => {{
+//         $(
+//             let typ = $crate::build_typ!($typ);
+//             if let Some(old_typ) = $decls.register(stringify!($ident), typ) {
+//                 panic!(
+//                     "trying to register identifier `{}` twice ({}/{})",
+//                     stringify!($ident),
+//                     old_typ,
+//                     typ
+//                 )
+//             }
+//         )*
+//         build_decls!(@$decls, $($tail)*);
+//     }};
+
+//     ($($stuff:tt)*) => {{
+//         let mut decls = $crate::Decls::new();
+//         $crate::build_decls!(@decls, $($stuff)*);
+//         decls
+//     }};
+// }
+
+/// Builds a transition system.
+#[macro_export]
+macro_rules! build_trans {
+    (
+        decls {
+            $($decls:tt)+
+        }
+        init: $init:tt
+        trans: $trans:tt
+        po_s: $($name:expr => $po:tt)+
+    ) => {{
+        let decls = $crate::build_decls!($($decls)*);
+        let init = $crate::build_trans_expr!(stateless, decls, $init);
+        let trans = $crate::build_trans_expr!(stateful, decls, $trans);
+        let mut po_s = std::collections::BTreeMap::new();
+        $(
+            let name = $name;
+            let expr = $crate::build_trans_expr!(stateless, decls, $po);
+            if let Some(e) = po_s.insert(name.into(), expr) {
+                panic!("found two proof obligations named `{}`", name)
+            }
+        )+
+        $crate::Sys::new(decls, init, trans, po_s)
+    }};
+}
