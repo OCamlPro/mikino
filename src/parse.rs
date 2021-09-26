@@ -6,12 +6,15 @@ crate::prelude!();
 
 use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
-use trans::{Decls, Sys};
+use trans::Decls;
+
+#[cfg(feature = "parser")]
+use trans::Sys;
 
 mod ast;
 pub mod kw;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "parser"))]
 mod test;
 
 pub use ast::*;
@@ -30,8 +33,9 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "parser")]
 peg::parser! {
-    /// PEG parsing rules.
+    /// PEG parsing rules, requires the `parser` feature.
     pub grammar rules() for str {
         /// Whitespace.
         pub rule whitespace() = quiet! {
@@ -115,7 +119,7 @@ peg::parser! {
         /// // Cannot start with a digit.
         /// assert_eq!(
         ///     ident("0_illegal").unwrap_err().to_string(),
-        ///     "error at 1:1: expected quoted or unquoted identifier",
+        ///     "error at 1:1: expected identifier",
         /// );
         ///
         /// // Cannot have weird SMT-LIB characters in unquoted identifiers.
@@ -162,7 +166,7 @@ peg::parser! {
             }
         }
         // Error message.
-        / expected!("quoted or unquoted identifier")
+        / expected!("identifier")
 
 
         /// Parses boolean constants.
@@ -504,20 +508,23 @@ peg::parser! {
         /// ```
         pub rule state() -> PRes<trans::Decls>
         = state:(
-            svar_doc:outer_doc()
-            _
-            svar:ident()
-            svars:(
-                _ ","
+            quiet! {
                 svar_doc:outer_doc()
-                _ id:ident() {
-                    id
+                _
+                svar:ident()
+                svars:(
+                    _ ","
+                    svar_doc:outer_doc()
+                    _ id:ident() {
+                        id
+                    }
+                )*
+                _ ":" _ svars_typ:hsmt_typ() {
+                    (svar, svars, svars_typ)
                 }
-            )*
-            _ ":" _ svars_typ:hsmt_typ() {
-                (svar, svars, svars_typ)
             }
-        )* {
+            / expected!(r#"list of "<ident>, <ident>, ... : <type>""#)
+        )+ {
             let mut decls = trans::Decls::new();
             for (svar, svars, typ) in state {
                 for svar in Some(svar).into_iter().chain(svars) {
@@ -562,14 +569,17 @@ peg::parser! {
         /// assert_eq!(expr.to_string(), "(p ⋁ (¬p))");
         /// ```
         pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
-        = (
-            _ s:position!() name:(
-                "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
-            ) e:position!() _ ":" _
-            expr:hsmt() {
-                (Spn::new(name, (s, e)), expr)
-            }
-        )+
+        = quiet! {
+            (
+                _ s:position!() name:(
+                    "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
+                ) e:position!() _ ":" _
+                expr:hsmt() {
+                    (Spn::new(name, (s, e)), expr)
+                }
+            )+
+        }
+        / expected!(r#"list of "<name> : <expr>" where <name> is a double-quoted string"#)
 
         /// Parses a full instance.
         ///
@@ -581,9 +591,15 @@ peg::parser! {
         state_doc:outer_doc()
         _ "state" _ "{" _ decls:state() _ "}"
         state_doc:outer_doc()
-        _ "init" _ "{" _ init:hsmt() _  "}"
+        _ "init" _ "{" _ init:(
+            quiet! { hsmt() }
+            / expected!("stateless expression")
+         ) _  "}"
         state_doc:outer_doc()
-        _ "trans" _ "{" _ trans:hsmt() _ "}"
+        _ "trans" _ "{" _ trans:(
+            quiet! { hsmt() }
+            / expected!("stateful expression")
+         ) _ "}"
         state_doc:outer_doc()
         _ "candidates" _ "{" _ candidates:candidates() _ "}"
         _ {
@@ -606,7 +622,7 @@ peg::parser! {
     }
 }
 
-/// Parses a system.
+/// Parses a system, requires the `parser` feature.
 ///
 /// Comments are one-line rust-style: `// ..\n`.
 ///
@@ -619,38 +635,28 @@ peg::parser! {
 /// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
 ///
 /// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
+#[cfg(feature = "parser")]
 pub fn sys(txt: &str) -> Res<Sys> {
-    match rules::hsmt_sys(txt) {
+    let res: Res<Sys> = match rules::hsmt_sys(txt) {
         Ok(res) => match res {
             Ok(sys) => Ok(sys),
             Err(e) => {
+                println!("perror");
                 let span = e.span;
                 let (prev, row, col, line, next) = span.pretty_of(txt);
-                let err = Error::from(ErrorKind::ParseErr(
-                    prev,
-                    row,
-                    col,
-                    line,
-                    next,
-                    "parse error".into(),
-                ));
-                return Err(err.chain_err(|| e.error));
+                let err = Error::parse("", row, col, line, prev, next);
+                Err(err.extend(e.error.into_iter()))
             }
         },
         Err(e) => {
+            println!("peg parse error");
             let span = Span::new(e.location.offset, e.location.offset);
             let (prev, row, col, line, next) = span.pretty_of(txt);
-            let err = Error::from(ErrorKind::ParseErr(
-                prev,
-                row,
-                col,
-                line,
-                next,
-                "parse error".into(),
-            ));
-            return Err(err.chain_err(|| e.to_string()));
+            let err = Error::parse("", row, col, line, prev, next);
+            Err(err.chain_err(|| format!("expected {}", e.expected)))
         }
-    }
+    };
+    res.chain_err(|| "run mikino in 'demo' mode for more details about the syntax")
 }
 
 /// Parses its input text.
@@ -678,13 +684,20 @@ impl<'txt> Parser<'txt> {
     }
 
     /// Fails at some position.
-    pub fn fail_at(&self, pos: usize, msg: impl std::fmt::Display) -> Error {
+    pub fn fail_at(&self, pos: usize, msg: impl Into<String>) -> Error {
         let (prev, row, col, line, next) = Span::new(pos, pos).pretty_of(self.txt);
-        ErrorKind::ParseErr(prev, row, col, line, next, msg.to_string()).into()
+        Error::Parse {
+            msg: msg.into(),
+            prev,
+            row,
+            col,
+            line,
+            next,
+        }
     }
 
     /// Fails at the current position.
-    pub fn fail(&self, msg: impl std::fmt::Display) -> Error {
+    pub fn fail(&self, msg: impl Into<String>) -> Error {
         self.fail_at(self.cursor, msg)
     }
 
@@ -998,7 +1011,7 @@ impl<'txt> Parser<'txt> {
     /// Parses an identifier.
     pub fn id(&mut self) -> Res<&'txt str> {
         self.try_id()
-            .ok_or_else(|| self.fail("expected an identifier"))
+            .ok_or_else(|| self.fail("expected an identifier").into())
     }
 
     /// Tries to parse an integer.
@@ -1308,8 +1321,7 @@ impl<'txt> Parser<'txt> {
 
                 if self.try_tag(")") {
                     self.ws_cmt();
-                    expr = PExpr::new_op(op, args)
-                        .map_err(|e| Error::from(self.fail(e.to_string())))?;
+                    expr = PExpr::new_op(op, args).map_err(|e| e.force_source(self.fail("")))?;
                     continue 'go_up_stack;
                 } else {
                     stack.push((op, args));

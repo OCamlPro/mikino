@@ -1,3 +1,5 @@
+#![feature(parser, demo)]
+
 fn run() {
     let input = mikino_api::DEMO;
 

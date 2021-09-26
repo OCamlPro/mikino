@@ -85,3 +85,252 @@ fn span() {
     // EOI.
     run!(input.len() => @(2, 4) Some("some"), "text", None);
 }
+
+#[test]
+fn errors() {
+    fn run(input: &str, expected: &[&str]) {
+        let mut expected = expected.iter().map(|s| *s);
+        println!("input:");
+        for line in input.lines() {
+            println!(" | {}", line);
+        }
+        match crate::parse::sys(input) {
+            Ok(_) => panic!("got an okay result"),
+            Err(e) => {
+                for e in e.into_iter() {
+                    let expected = expected
+                        .next()
+                        .expect("got longer error chain than expected");
+                    println!("error:");
+                    for line in e.pretty(()).lines() {
+                        println!("    {}", line);
+                    }
+
+                    assert_eq!(&e.pretty(()), expected);
+                }
+            }
+        }
+
+        if let Some(next) = expected.next() {
+            println!("expected more errors:");
+            println!("{}", next);
+            if let Some(n) = expected.fold(None, |acc, _| Some(acc.unwrap_or(0) + 1)) {
+                println!("and {} more", n);
+            }
+        }
+    }
+
+    macro_rules! run {
+        {
+            $input:expr =>
+            $($expected:expr),+ $(,)?
+        } => {run(
+            $input,
+            &[$($expected),+]
+        )};
+    }
+
+    run!(
+        "" =>
+        "\
+parse error at 1:1
+  |
+1 | <EOI>
+  | ^~~~ here\
+        ",
+        r#"expected "state""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state" =>
+        "\
+parse error at 1:6
+  |
+1 | state<EOI>
+  |      ^~~~ here\
+        ",
+        r#"expected "{""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state {}" =>
+        "\
+parse error at 1:8
+  |
+1 | state {}<EOI>
+  |        ^~~~ here\
+        ",
+        r#"expected list of "<ident>, <ident>, ... : <type>""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v }" =>
+        "\
+parse error at 1:9
+  |
+1 | state { v }<EOI>
+  |         ^~~~ here\
+        ",
+        r#"expected list of "<ident>, <ident>, ... : <type>""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }" =>
+        "\
+parse error at 1:18
+  |
+1 | state { v : int }<EOI>
+  |                  ^~~~ here\
+        ",
+        r#"expected "init""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit" =>
+        "\
+parse error at 2:5
+  | state { v : int }
+2 | init<EOI>
+  |     ^~~~ here\
+        ",
+        r#"expected "{""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { " =>
+        "\
+parse error at 2:8
+  | state { v : int }
+2 | init { <EOI>
+  |        ^~~~ here\
+        ",
+        r#"expected stateless expression"#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true" =>
+        "\
+parse error at 2:12
+  | state { v : int }
+2 | init { true<EOI>
+  |            ^~~~ here\
+        ",
+        r#"expected "}""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }" =>
+        "\
+parse error at 2:14
+  | state { v : int }
+2 | init { true }<EOI>
+  |              ^~~~ here\
+        ",
+        r#"expected "trans""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans {" =>
+        "\
+parse error at 3:8
+  | init { true }
+3 | trans {<EOI>
+  |        ^~~~ here\
+        ",
+        r#"expected stateful expression"#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true" =>
+        "\
+parse error at 3:13
+  | init { true }
+3 | trans { true<EOI>
+  |             ^~~~ here\
+        ",
+        r#"expected "}""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }" =>
+        "\
+parse error at 3:15
+  | init { true }
+3 | trans { true }<EOI>
+  |               ^~~~ here\
+        ",
+        r#"expected "candidates""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }\ncandidates" =>
+        "\
+parse error at 4:11
+  | trans { true }
+4 | candidates<EOI>
+  |           ^~~~ here\
+        ",
+        r#"expected "{""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }\ncandidates {" =>
+        "\
+parse error at 4:13
+  | trans { true }
+4 | candidates {<EOI>
+  |             ^~~~ here\
+        ",
+        r#"expected list of "<name> : <expr>" where <name> is a double-quoted string"#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\"" =>
+        "\
+parse error at 4:14
+  | trans { true }
+4 | candidates { \"prop\"<EOI>
+  |              ^~~~ here\
+        ",
+        r#"expected list of "<name> : <expr>" where <name> is a double-quoted string"#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" :" =>
+        "\
+parse error at 4:14
+  | trans { true }
+4 | candidates { \"prop\" :<EOI>
+  |              ^~~~ here\
+        ",
+        r#"expected list of "<name> : <expr>" where <name> is a double-quoted string"#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+
+    run!(
+        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" : true" =>
+        "\
+parse error at 4:27
+  | trans { true }
+4 | candidates { \"prop\" : true<EOI>
+  |                           ^~~~ here\
+        ",
+        r#"expected "}""#,
+        "run mikino in 'demo' mode for more details about the syntax",
+    );
+}

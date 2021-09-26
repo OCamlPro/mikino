@@ -8,6 +8,7 @@ readme = "README.md"
 description = "A simple induction and BMC engine"
 homepage = "https://github.com/AdrienChampion/mikino"
 repository = "https://github.com/AdrienChampion/mikino"
+documentation = "https://docs.rs/crate/mikino_api"
 keywords = ["smt", "satisfiability", "verification", "induction"]
 categories = ["science"]
 
@@ -16,12 +17,20 @@ categories = ["science"]
 [[example]]
 name = "sys"
 test = true
+required-features = ["parser", "demo"]
+
+[features]
+parser = []
+demo = []
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
-error-chain = "^0.12"
+either = "^1.6.1"
+error-chain = "^0.12.4"
+lazy_static = "^1.4"
 num = "^0.4"
-rsmt2 = "^0.14"
-either = "^1.6"
 peg = "^0.7"
 readonly = "^0.2"
-lazy_static = "^1.4"
+rsmt2 = "^0.14"

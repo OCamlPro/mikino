@@ -10,20 +10,20 @@ pub struct PError {
     /// Span where the error happened.
     pub span: Span,
     /// Actual error.
-    pub error: Error,
+    pub error: ErrorChain,
 }
 impl fmt::Display for PError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             fmt,
             "[{}, {}] {}",
-            self.span.start, self.span.end, self.error,
+            self.span.start, self.span.end, self.error.source,
         )
     }
 }
 impl PError {
     /// Constructor.
-    pub fn new(error: impl Into<Error>, span: impl Into<Span>) -> Self {
+    pub fn new(error: impl Into<ErrorChain>, span: impl Into<Span>) -> Self {
         let error = error.into();
         let span = span.into();
         PError { span, error }
@@ -32,7 +32,7 @@ impl PError {
     /// Chains an error.
     pub fn chain_err<E>(mut self, err: impl FnOnce() -> E) -> Self
     where
-        ErrorKind: From<E>,
+        Error: From<E>,
     {
         self.error = self.error.chain_err(err);
         self
@@ -66,6 +66,11 @@ impl Span {
 
     /// Extracts the relevant line of the input, and the previous/next line if any.
     pub fn pretty_of(self, text: &str) -> (Option<String>, usize, usize, String, Option<String>) {
+        if text.is_empty() {
+            assert_eq!(self.start, 0);
+            assert_eq!(self.end, 0);
+            return (None, 0, 0, "<EOI>".into(), None);
+        }
         let mut lines = text.lines().enumerate();
 
         let mut count = self.start;
@@ -73,13 +78,15 @@ impl Span {
 
         while let Some((row, line)) = lines.next() {
             if line.len() >= count {
-                return (
-                    prev_line.map(String::from),
-                    row,
-                    count,
-                    line.into(),
-                    lines.next().map(|(_, line)| line.into()),
-                );
+                let (line, next) = {
+                    let next = lines.next().map(|(_, s)| s.to_string());
+                    if next.is_none() {
+                        (format!("{}{}", line, "<EOI>"), next)
+                    } else {
+                        (line.into(), next)
+                    }
+                };
+                return (prev_line.map(String::from), row, count, line, next);
             }
 
             count -= line.len() + 1;
