@@ -384,9 +384,9 @@ init {
 ///   expression. These last two expressions must have the same type. In the two `ite`s below, that
 ///   type is always `bool`.
 trans {
-    if reset {
-        cnt = 0
-    } else if stop {
+    if 'reset {
+        'cnt = 0
+    } else if 'stop {
         'cnt = cnt
     } else {
         'cnt = cnt + 1
