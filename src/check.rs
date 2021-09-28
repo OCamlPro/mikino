@@ -286,7 +286,10 @@ impl<'sys> InternalChecker<'sys> {
         for (name, po) in self.sys.po_s() {
             if res.okay.contains(name) {
                 self.solver.assert_with(&po, step).chain_err(|| {
-                    format!("while asserting negation of PO `{}` at step {}", name, step)
+                    format!(
+                        "while asserting negation of candidate `{}` at step {}",
+                        name, step
+                    )
                 })?
             }
         }
@@ -299,7 +302,10 @@ impl<'sys> InternalChecker<'sys> {
         for (name, po) in self.sys.po_s() {
             let not_po = po.negated();
             self.solver.assert_with(&not_po, step).chain_err(|| {
-                format!("while asserting negation of PO `{}` at step {}", name, step)
+                format!(
+                    "while asserting negation of candidate `{}` at step {}",
+                    name, step
+                )
             })?
         }
         Ok(())
@@ -316,7 +322,7 @@ impl<'sys> InternalChecker<'sys> {
                 self.sys
                     .po_s()
                     .get_key_value(po as &str)
-                    .ok_or_else(|| format!("unknown PO `{}`", po))
+                    .ok_or_else(|| format!("unknown candidate `{}`", po))
             })
             .collect();
         for to_check in to_check {
@@ -324,7 +330,10 @@ impl<'sys> InternalChecker<'sys> {
             let not_po = po.negated();
             self.solver.push(1)?;
             self.solver.assert_with(&not_po, step).chain_err(|| {
-                format!("while asserting negation of PO `{}` at step {}", name, step)
+                format!(
+                    "while asserting negation of candidate `{}` at step {}",
+                    name, step
+                )
             })?;
             if self.solver.check_sat()? {
                 changed = true;

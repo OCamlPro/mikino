@@ -186,6 +186,15 @@ impl<'txt> Ast<'txt> {
         Self::Var { ident, pon }
     }
 
+    /// Span accessor.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Var { ident, .. } => ident.span,
+            Self::Cst(c) => c.span,
+            Self::App { op, .. } => op.span,
+        }
+    }
+
     /// Binary operator application.
     pub fn binapp(op: Spn<Op>, lft: Self, rgt: Self) -> Self {
         Self::App {

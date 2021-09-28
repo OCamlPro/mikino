@@ -28,9 +28,9 @@ pub mod err {
         Parse {
             /// Message.
             msg: String,
-            /// Row where the error occurred.
+            /// Row where the error occurred (starts at `0`).
             row: usize,
-            /// Column where the error occured.
+            /// Column where the error occured (starts at `0`).
             col: usize,
             /// Line of the error.
             line: String,
@@ -145,7 +145,14 @@ pub mod err {
                     line,
                     ..
                 } => {
-                    write!(fmt, "parse error at {}:{}: {} | {}", row, col, msg, line)
+                    write!(
+                        fmt,
+                        "parse error at {}:{}: {} | {}",
+                        row + 1,
+                        col + 1,
+                        msg,
+                        line
+                    )
                 }
             }
         }
@@ -295,7 +302,7 @@ pub mod err {
 }
 
 /// String representation of a simple demo system, requires the `demo` feature.
-#[cfg(feature = "demo")]
+#[cfg(feature = "parser")]
 pub const DEMO: &str = r#"//! A simple demo system.
 //!
 //! Systems are declared in four ordered parts:
@@ -360,43 +367,47 @@ pub const DEMO: &str = r#"//! A simple demo system.
 //! are also supported: `if c_1 { t_1 } else if c_2 { t_2 } .... else { e }`.
 
 /// Variables.
-state {
+svars {
     /// Stop button (input).
-    stop,
+    stop
     /// Reset button (input).
-    reset: bool
+    reset: bool,
     /// Time counter (output).
-    cnt: int
+    cnt: int,
 }
 
 /// Initial predicate.
+/// 
+/// Comma-separated list of stateless expressions, with optional trailing comma.
 init {
     // `cnt` can be anything as long as it is positive.
-    cnt ≥ 0
+    cnt ≥ 0,
     // if `reset`, then `cnt` has to be `0`.
-    ∧ (reset ⇒ cnt = 0)
+    (reset ⇒ cnt = 0),
 }
 
 /// Transition predicate.
+/// 
+/// Comma-separated list of stateful expressions, with optional trailing comma.
 /// 
 /// - `reset` has priority over `stop`;
 /// - the `ite` stands for "if-then-else" and takes a condition, a `then` expression and an `else`
 ///   expression. These last two expressions must have the same type. In the two `ite`s below, that
 ///   type is always `bool`.
 trans {
-    if 'reset {
-        'cnt = 0
+    'cnt = if 'reset {
+        0
     } else if 'stop {
-        'cnt = cnt
+        cnt
     } else {
-        'cnt = cnt + 1
-    }
+        cnt + 1
+    },
 }
 
 /// Proof obligations.
 candidates {
-    "cnt is positive": cnt ≥ 0
-    "cnt is not -7": ¬(cnt = -7)
-    "if reset then cnt is 0": reset ⇒ cnt = 0
+    "cnt is positive": cnt ≥ 0,
+    "cnt is not -7": ¬(cnt = -7),
+    "if reset then cnt is 0": reset ⇒ cnt = 0,
 }
 "#;

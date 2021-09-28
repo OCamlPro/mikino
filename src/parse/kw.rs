@@ -47,7 +47,7 @@ build_keywords! {
     /// Mikino-specific keywords.
     mkn {
         /// Variable declaration keyword.
-        state: "state",
+        svars: "svars",
         /// Initial predicate declaration keyword.
         init: "init",
         /// Transition relation declaration keyword.
