@@ -301,13 +301,11 @@ impl Op {
     /// Minimal arity of `self`.
     pub fn min_arity(self) -> usize {
         match self {
-            Self::Not | Self::Add | Self::Sub => 1,
+            Self::Not | Self::Add | Self::Sub | Self::And | Self::Or => 1,
             Self::Mod
             | Self::Mul
             | Self::Div
             | Self::IDiv
-            | Self::And
-            | Self::Or
             | Self::Implies
             | Self::Eq
             | Self::Le
@@ -705,7 +703,7 @@ impl<V> PExpr<V> {
     }
 
     /// Simplifies the application of `op` to `args`, **non-recursively**.
-    fn simplify_app(op: Op, args: Vec<Self>) -> Self {
+    fn simplify_app(op: Op, mut args: Vec<Self>) -> Self {
         match (op, args.len()) {
             (Op::Sub, 1) if args[0].is_cst() => match &args[0] {
                 Self::Cst(Cst::I(i)) => Cst::I(-i).into(),
@@ -718,6 +716,9 @@ impl<V> PExpr<V> {
                 (Self::Cst(Cst::R(lft)), Self::Cst(Cst::R(rgt))) => Cst::R(lft - rgt).into(),
                 _ => panic!("trying to apply `{}` to arguments of unexpected type", op),
             },
+            (Op::Add, 1) | (Op::And, 1) | (Op::Or, 1) => {
+                args.pop().expect("[unreachable] pop on vec of len `1`")
+            }
             _ => Self::App { op, args },
         }
     }

@@ -370,27 +370,31 @@ state {
 }
 
 /// Initial predicate.
+/// 
+/// Comma-separated list of stateless expressions, with optional trailing comma.
 init {
     // `cnt` can be anything as long as it is positive.
-    cnt ≥ 0
+    cnt ≥ 0,
     // if `reset`, then `cnt` has to be `0`.
-    ∧ (reset ⇒ cnt = 0)
+    (reset ⇒ cnt = 0),
 }
 
 /// Transition predicate.
+/// 
+/// Comma-separated list of stateful expressions, with optional trailing comma.
 /// 
 /// - `reset` has priority over `stop`;
 /// - the `ite` stands for "if-then-else" and takes a condition, a `then` expression and an `else`
 ///   expression. These last two expressions must have the same type. In the two `ite`s below, that
 ///   type is always `bool`.
 trans {
-    if 'reset {
-        'cnt = 0
+    'cnt = if 'reset {
+        0
     } else if 'stop {
-        'cnt = cnt
+        cnt
     } else {
-        'cnt = cnt + 1
-    }
+        cnt + 1
+    },
 }
 
 /// Proof obligations.

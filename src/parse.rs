@@ -509,6 +509,7 @@ peg::parser! {
         pub rule state() -> PRes<trans::Decls>
         = state:(
             quiet! {
+                _
                 svar_doc:outer_doc()
                 _
                 svar:ident()
@@ -519,12 +520,13 @@ peg::parser! {
                         id
                     }
                 )*
-                _ ":" _ svars_typ:hsmt_typ() {
+                _ ":" _ svars_typ:hsmt_typ()
+                {
                     (svar, svars, svars_typ)
                 }
             }
             / expected!(r#"list of "<ident>, <ident>, ... : <type>""#)
-        ) ++ "," (",")? {
+        ) ++ (_ "," _) (",")? {
             let mut decls = trans::Decls::new();
             for (svar, svars, typ) in state {
                 for svar in Some(svar).into_iter().chain(svars) {
@@ -574,10 +576,11 @@ peg::parser! {
                 _ s:position!() name:(
                     "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
                 ) e:position!() _ ":" _
-                expr:hsmt() {
+                expr:hsmt()
+                {
                     (Spn::new(name, (s, e)), expr)
                 }
-            ) ++ "," (",")? {
+            ) ++ (_ "," _) (",")? {
                 cands
             }
         }
@@ -593,21 +596,21 @@ peg::parser! {
         state_doc:outer_doc()
         _ "state" _ "{" _ decls:state() _ "}"
         state_doc:outer_doc()
-        _ "init" _ "{" _ init:(
-            quiet! { hsmt() }
-            / expected!("stateless expression")
+        _ init_s:position!() "init" init_e:position!() _ "{" _ hsmt_init:(
+            quiet! { init:(hsmt()) ++ (_ "," _) (",")? { init } }
+            / expected!("comma-separated list of stateless expression")
          ) _  "}"
         state_doc:outer_doc()
-        _ "trans" _ "{" _ trans:(
-            quiet! { hsmt() }
-            / expected!("stateful expression")
+        _ trans_s:position!() "trans" trans_e:position!() _ "{" _ hsmt_trans:(
+            quiet! { trans:(hsmt()) ++ (_ "," _) (",")? { trans } }
+            / expected!("comma-separated list of stateful expression")
          ) _ "}"
         state_doc:outer_doc()
         _ "candidates" _ "{" _ candidates:candidates() _ "}"
         _ {
             let decls = decls?;
-            let init = init.to_expr(&decls)?;
-            let trans = trans.to_sexpr(&decls)?;
+            let init = Ast::app(Spn::new(Op::And, (init_s, init_e)), hsmt_init).to_expr(&decls)?;
+            let trans = Ast::app(Spn::new(Op::And, (trans_s, trans_e)), hsmt_trans).to_sexpr(&decls)?;
 
             let mut pos = Map::new();
 

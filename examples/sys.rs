@@ -10,7 +10,18 @@ fn run() {
 
     println!("parsing and building transition system...");
 
-    let _sys = mikino_api::parse::sys(input).unwrap();
+    match mikino_api::parse::sys(input) {
+        Ok(_) => (),
+        Err(e) => {
+            for e in e.into_iter() {
+                for (idx, line) in e.pretty(()).lines().enumerate() {
+                    let pref = if idx == 0 { "- " } else { "  " };
+                    println!("{}{}", line, pref);
+                }
+            }
+            std::process::exit(2);
+        }
+    }
 
     println!("success");
 }
