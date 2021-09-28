@@ -434,6 +434,9 @@ peg::parser! {
             lft:(@) _ s:position!() "-" e:position!() _ rgt:@ {
                 Ast::binapp(Spn::new(Op::Sub, (s, e)), lft, rgt)
             }
+            lft:(@) _ s:position!() "%" e:position!() _ rgt:@ {
+                Ast::binapp(Spn::new(Op::Mod, (s, e)), lft, rgt)
+            }
             --
             lft:(@) _ s:position!() "*" e:position!() _ rgt:@ {
                 Ast::binapp(Spn::new(Op::Mul, (s, e)), lft, rgt)

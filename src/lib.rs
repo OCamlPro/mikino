@@ -75,9 +75,9 @@ pub mod err {
                     format!("{} error: {}", style.under("IO"), e)
                 }
                 Self::Smt(e) => {
-                    let mut s = format!("{} error: {}", style.under("smt-level"), e);
+                    let mut s = format!("{} error:", style.under("smt-level"));
                     for e in e.iter() {
-                        s.push_str(&format!("- {}", e));
+                        s.push_str(&format!("\n- {}", e));
                     }
                     s
                 }
