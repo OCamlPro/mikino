@@ -487,22 +487,22 @@ peg::parser! {
         /// ```rust
         /// # use mikino_api::parse::rules::state;
         /// let input = "\
-        ///     n_1 : int
-        ///     b_1 : bool
+        ///     n_1 : int,
+        ///     b_1 : bool,
         ///     // Avoid putting declarations on the same line, it looks bad.
-        ///     n_2: int b_2 : bool
+        ///     n_2: int b_2 : bool,
         ///     // Aggregated declaration.
-        ///     n_3, n_4, n_5: int
-        ///     p, q: bool\
+        ///     n_3 n_4 n_5: int,
+        ///     p q: bool,\
         /// ";
         /// let decls = state(input).unwrap().unwrap();
         /// assert_eq!(
         ///     decls.to_string(),
         ///     // State-declaration-printing sorts and aggregates idents alphabetically.
         ///     "\
-        /// b_1, b_2: bool
-        /// n_1, n_2, n_3, n_4, n_5: int
-        /// p, q: bool\
+        /// b_1 b_2: bool,
+        /// n_1 n_2 n_3 n_4 n_5: int,
+        /// p q: bool,\
         ///     "
         /// );
         /// ```
@@ -513,7 +513,7 @@ peg::parser! {
                 _
                 svar:ident()
                 svars:(
-                    _ ","
+                    _
                     svar_doc:outer_doc()
                     _ id:ident() {
                         id
@@ -524,7 +524,7 @@ peg::parser! {
                 }
             }
             / expected!(r#"list of "<ident>, <ident>, ... : <type>""#)
-        )+ {
+        ) ++ "," (",")? {
             let mut decls = trans::Decls::new();
             for (svar, svars, typ) in state {
                 for svar in Some(svar).into_iter().chain(svars) {
@@ -551,9 +551,9 @@ peg::parser! {
         /// ```rust
         /// # use mikino_api::parse::rules::candidates;
         /// let input = r#"
-        ///     "some candidate": x ≥ 0
-        ///     "another one": x ≥ y + 2 ⋁ y ≥ -7
-        ///     "tautology": p ⋁ ¬p"#;
+        ///     "some candidate": x ≥ 0,
+        ///     "another one": x ≥ y + 2 ⋁ y ≥ -7,
+        ///     "tautology": p ⋁ ¬p,"#;
         /// let mut candidates = candidates(input).unwrap().into_iter();
         ///
         /// let (name, expr) = candidates.next().unwrap();
@@ -570,14 +570,16 @@ peg::parser! {
         /// ```
         pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
         = quiet! {
-            (
+            cands:(
                 _ s:position!() name:(
                     "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
                 ) e:position!() _ ":" _
                 expr:hsmt() {
                     (Spn::new(name, (s, e)), expr)
                 }
-            )+
+            ) ++ "," (",")? {
+                cands
+            }
         }
         / expected!(r#"list of "<name> : <expr>" where <name> is a double-quoted string"#)
 

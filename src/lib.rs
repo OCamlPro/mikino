@@ -362,11 +362,11 @@ pub const DEMO: &str = r#"//! A simple demo system.
 /// Variables.
 state {
     /// Stop button (input).
-    stop,
+    stop
     /// Reset button (input).
-    reset: bool
+    reset: bool,
     /// Time counter (output).
-    cnt: int
+    cnt: int,
 }
 
 /// Initial predicate.
@@ -395,8 +395,8 @@ trans {
 
 /// Proof obligations.
 candidates {
-    "cnt is positive": cnt ≥ 0
-    "cnt is not -7": ¬(cnt = -7)
-    "if reset then cnt is 0": reset ⇒ cnt = 0
+    "cnt is positive": cnt ≥ 0,
+    "cnt is not -7": ¬(cnt = -7),
+    "if reset then cnt is 0": reset ⇒ cnt = 0,
 }
 "#;

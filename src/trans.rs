@@ -51,11 +51,11 @@ impl fmt::Display for Decls {
             }
             for (idx, var) in vars.into_iter().enumerate() {
                 if idx > 0 {
-                    write!(fmt, ", ")?;
+                    write!(fmt, " ")?;
                 }
                 var.fmt(fmt)?;
             }
-            write!(fmt, ": {}", typ)?;
+            write!(fmt, ": {},", typ)?;
         }
 
         Ok(())
