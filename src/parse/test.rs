@@ -25,12 +25,12 @@ fn error_pos() {
     run(
         "// Blah.\nerr_token",
         |input| sys(input).map(|_| "sys"),
-        Ok("error at 2:1: expected \"state\""),
+        Ok("parse error at 2:1:  | err_token<EOI>, expected \"svars\", run mikino in 'demo' mode for more details about the syntax"),
     );
     run(
         "// Blah.",
         |input| sys(input).map(|_| "sys"),
-        Ok("error at 1:9: expected \"state\""),
+        Ok("parse error at 1:9:  | // Blah.<EOI>, expected \"svars\", run mikino in 'demo' mode for more details about the syntax"),
     );
 }
 
@@ -78,12 +78,12 @@ fn span() {
     run!(12 => @(1, 4) Some("here is"), "some", Some("text"));
 
     // Last line.
-    run!(15 => @(2, 2) Some("some"), "text", None);
-    run!(16 => @(2, 3) Some("some"), "text", None);
-    run!(17 => @(2, 4) Some("some"), "text", None);
+    run!(15 => @(2, 2) Some("some"), "text<EOI>", None);
+    run!(16 => @(2, 3) Some("some"), "text<EOI>", None);
+    run!(17 => @(2, 4) Some("some"), "text<EOI>", None);
 
     // EOI.
-    run!(input.len() => @(2, 4) Some("some"), "text", None);
+    run!(input.len() => @(2, 4) Some("some"), "text<EOI>", None);
 }
 
 #[test]
@@ -138,16 +138,16 @@ parse error at 1:1
 1 | <EOI>
   | ^~~~ here\
         ",
-        r#"expected "state""#,
+        r#"expected "svars""#,
         "run mikino in 'demo' mode for more details about the syntax",
     );
 
     run!(
-        "state" =>
+        "svars" =>
         "\
 parse error at 1:6
   |
-1 | state<EOI>
+1 | svars<EOI>
   |      ^~~~ here\
         ",
         r#"expected "{""#,
@@ -155,11 +155,11 @@ parse error at 1:6
     );
 
     run!(
-        "state {}" =>
+        "svars {}" =>
         "\
 parse error at 1:8
   |
-1 | state {}<EOI>
+1 | svars {}<EOI>
   |        ^~~~ here\
         ",
         r#"expected list of "<ident>, <ident>, ... : <type>""#,
@@ -167,11 +167,11 @@ parse error at 1:8
     );
 
     run!(
-        "state { v }" =>
+        "svars { v }" =>
         "\
 parse error at 1:9
   |
-1 | state { v }<EOI>
+1 | svars { v }<EOI>
   |         ^~~~ here\
         ",
         r#"expected list of "<ident>, <ident>, ... : <type>""#,
@@ -179,11 +179,11 @@ parse error at 1:9
     );
 
     run!(
-        "state { v : int }" =>
+        "svars { v : int }" =>
         "\
 parse error at 1:18
   |
-1 | state { v : int }<EOI>
+1 | svars { v : int }<EOI>
   |                  ^~~~ here\
         ",
         r#"expected "init""#,
@@ -191,10 +191,10 @@ parse error at 1:18
     );
 
     run!(
-        "state { v : int }\ninit" =>
+        "svars { v : int }\ninit" =>
         "\
 parse error at 2:5
-  | state { v : int }
+  | svars { v : int }
 2 | init<EOI>
   |     ^~~~ here\
         ",
@@ -203,22 +203,22 @@ parse error at 2:5
     );
 
     run!(
-        "state { v : int }\ninit { " =>
+        "svars { v : int }\ninit { " =>
         "\
 parse error at 2:8
-  | state { v : int }
+  | svars { v : int }
 2 | init { <EOI>
   |        ^~~~ here\
         ",
-        r#"expected stateless expression"#,
+        r#"expected comma-separated list of stateless expressions"#,
         "run mikino in 'demo' mode for more details about the syntax",
     );
 
     run!(
-        "state { v : int }\ninit { true" =>
+        "svars { v : int }\ninit { true" =>
         "\
 parse error at 2:12
-  | state { v : int }
+  | svars { v : int }
 2 | init { true<EOI>
   |            ^~~~ here\
         ",
@@ -227,10 +227,10 @@ parse error at 2:12
     );
 
     run!(
-        "state { v : int }\ninit { true }" =>
+        "svars { v : int }\ninit { true }" =>
         "\
 parse error at 2:14
-  | state { v : int }
+  | svars { v : int }
 2 | init { true }<EOI>
   |              ^~~~ here\
         ",
@@ -239,19 +239,19 @@ parse error at 2:14
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans {" =>
+        "svars { v : int }\ninit { true }\ntrans {" =>
         "\
 parse error at 3:8
   | init { true }
 3 | trans {<EOI>
   |        ^~~~ here\
         ",
-        r#"expected stateful expression"#,
+        r#"expected comma-separated list of stateful expressions"#,
         "run mikino in 'demo' mode for more details about the syntax",
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true" =>
+        "svars { v : int }\ninit { true }\ntrans { true" =>
         "\
 parse error at 3:13
   | init { true }
@@ -263,7 +263,7 @@ parse error at 3:13
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }" =>
+        "svars { v : int }\ninit { true }\ntrans { true }" =>
         "\
 parse error at 3:15
   | init { true }
@@ -275,7 +275,7 @@ parse error at 3:15
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }\ncandidates" =>
+        "svars { v : int }\ninit { true }\ntrans { true }\ncandidates" =>
         "\
 parse error at 4:11
   | trans { true }
@@ -287,7 +287,7 @@ parse error at 4:11
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }\ncandidates {" =>
+        "svars { v : int }\ninit { true }\ntrans { true }\ncandidates {" =>
         "\
 parse error at 4:13
   | trans { true }
@@ -299,7 +299,7 @@ parse error at 4:13
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\"" =>
+        "svars { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\"" =>
         "\
 parse error at 4:14
   | trans { true }
@@ -311,7 +311,7 @@ parse error at 4:14
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" :" =>
+        "svars { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" :" =>
         "\
 parse error at 4:14
   | trans { true }
@@ -323,7 +323,7 @@ parse error at 4:14
     );
 
     run!(
-        "state { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" : true" =>
+        "svars { v : int }\ninit { true }\ntrans { true }\ncandidates { \"prop\" : true" =>
         "\
 parse error at 4:27
   | trans { true }

@@ -1,6 +1,4 @@
-//! Transition system parser.
-//!
-//! The [`DEMO` constant][crate::DEMO] illustrates and discusses the syntax expected by the parser.
+//! Backend parser (SMT-LIB) and frontend parser (requires the `parser` feature).
 
 crate::prelude!();
 
@@ -36,6 +34,8 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
 #[cfg(feature = "parser")]
 peg::parser! {
     /// PEG parsing rules, requires the `parser` feature.
+    ///
+    /// The [`DEMO` constant][crate::DEMO] illustrates and discusses the syntax expected by the parser.
     pub grammar rules() for str {
         /// Whitespace.
         pub rule whitespace() = quiet! {
@@ -476,26 +476,27 @@ peg::parser! {
         }
         / expected!("a type (`int`, `rat` or `bool`")
 
-        /// Parses a state declaration.
+        /// Parses some state variables.
         ///
-        /// A state declaration is a list of `<ident> : <type>`. No separator is needed. For
-        /// convenience, state variables with the same type can be listed together, separated
-        /// by `,`, before the `: <type>`. For instance, `v_1, v_2, v_3: int`.
+        /// A state declaration is a comma-separated list of `<ident> : <type>`, with an optional
+        /// trailing comma. For convenience, state variables with the same type can be listed
+        /// together, separated by whitespace(s), before the `: <type>`. For instance, `v_1 v_2 v_3:
+        /// int`.
         ///
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::parse::rules::state;
+        /// # use mikino_api::parse::rules::svars;
         /// let input = "\
         ///     n_1 : int,
         ///     b_1 : bool,
         ///     // Avoid putting declarations on the same line, it looks bad.
-        ///     n_2: int b_2 : bool,
+        ///     n_2: int, b_2 : bool,
         ///     // Aggregated declaration.
         ///     n_3 n_4 n_5: int,
         ///     p q: bool,\
         /// ";
-        /// let decls = state(input).unwrap().unwrap();
+        /// let decls = svars(input).unwrap().unwrap();
         /// assert_eq!(
         ///     decls.to_string(),
         ///     // State-declaration-printing sorts and aggregates idents alphabetically.
@@ -506,8 +507,8 @@ peg::parser! {
         ///     "
         /// );
         /// ```
-        pub rule state() -> PRes<trans::Decls>
-        = state:(
+        pub rule svars() -> PRes<trans::Decls>
+        = svars:(
             quiet! {
                 _
                 svar_doc:outer_doc()
@@ -528,7 +529,7 @@ peg::parser! {
             / expected!(r#"list of "<ident>, <ident>, ... : <type>""#)
         ) ++ (_ "," _) (",")? {
             let mut decls = trans::Decls::new();
-            for (svar, svars, typ) in state {
+            for (svar, svars, typ) in svars {
                 for svar in Some(svar).into_iter().chain(svars) {
                     let prev = decls.register(svar.inner, typ);
                     if prev.is_some() {
@@ -593,19 +594,23 @@ peg::parser! {
         =
         sys_doc:inner_doc()
 
-        state_doc:outer_doc()
-        _ "state" _ "{" _ decls:state() _ "}"
-        state_doc:outer_doc()
+        vars_doc:outer_doc()
+        _ "svars" _ "{" _ decls:svars() _ "}"
+        init_doc:outer_doc()
         _ init_s:position!() "init" init_e:position!() _ "{" _ hsmt_init:(
-            quiet! { init:(hsmt()) ++ (_ "," _) (",")? { init } }
-            / expected!("comma-separated list of stateless expression")
+            quiet! {
+                init:(hsmt()) ++ (_ "," _) (",")? { init }
+            }
+            / expected!("comma-separated list of stateless expressions")
          ) _  "}"
-        state_doc:outer_doc()
+        trans_doc:outer_doc()
         _ trans_s:position!() "trans" trans_e:position!() _ "{" _ hsmt_trans:(
-            quiet! { trans:(hsmt()) ++ (_ "," _) (",")? { trans } }
-            / expected!("comma-separated list of stateful expression")
+            quiet! {
+                trans:(hsmt()) ++ (_ "," _) (",")? { trans }
+            }
+            / expected!("comma-separated list of stateful expressions")
          ) _ "}"
-        state_doc:outer_doc()
+        candidates_doc:outer_doc()
         _ "candidates" _ "{" _ candidates:candidates() _ "}"
         _ {
             let decls = decls?;
@@ -633,7 +638,7 @@ peg::parser! {
 ///
 /// A system is composed of four `{ ... }` blocks each starting with a specific keyword:
 ///
-/// - `state { ... }`: the [state variables][rules::state] of the system;
+/// - `svars { ... }`: the [state variables][rules::svars] of the system;
 ///
 /// - `init { ... }`: the initial predicate, *i.e.* a stateless (no `'` prime) expression;
 ///

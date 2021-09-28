@@ -28,9 +28,9 @@ pub mod err {
         Parse {
             /// Message.
             msg: String,
-            /// Row where the error occurred.
+            /// Row where the error occurred (starts at `0`).
             row: usize,
-            /// Column where the error occured.
+            /// Column where the error occured (starts at `0`).
             col: usize,
             /// Line of the error.
             line: String,
@@ -145,7 +145,14 @@ pub mod err {
                     line,
                     ..
                 } => {
-                    write!(fmt, "parse error at {}:{}: {} | {}", row, col, msg, line)
+                    write!(
+                        fmt,
+                        "parse error at {}:{}: {} | {}",
+                        row + 1,
+                        col + 1,
+                        msg,
+                        line
+                    )
                 }
             }
         }
@@ -295,7 +302,7 @@ pub mod err {
 }
 
 /// String representation of a simple demo system, requires the `demo` feature.
-#[cfg(feature = "demo")]
+#[cfg(feature = "parser")]
 pub const DEMO: &str = r#"//! A simple demo system.
 //!
 //! Systems are declared in four ordered parts:
@@ -360,7 +367,7 @@ pub const DEMO: &str = r#"//! A simple demo system.
 //! are also supported: `if c_1 { t_1 } else if c_2 { t_2 } .... else { e }`.
 
 /// Variables.
-state {
+svars {
     /// Stop button (input).
     stop
     /// Reset button (input).

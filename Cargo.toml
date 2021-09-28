@@ -17,11 +17,10 @@ categories = ["science"]
 [[example]]
 name = "sys"
 test = true
-required-features = ["parser", "demo"]
+required-features = ["parser"]
 
 [features]
 parser = []
-demo = []
 
 [package.metadata.docs.rs]
 all-features = true
