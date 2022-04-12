@@ -4,6 +4,8 @@ crate::prelude!();
 
 use expr::*;
 
+pub mod hsmt;
+
 /// Parse error.
 #[derive(Debug)]
 pub struct PError {

@@ -141,15 +141,37 @@ impl HasTyp for Cst {
 impl Cst {
     /// Creates a boolean constant.
     pub fn bool(b: bool) -> Self {
-        Cst::B(b)
+        Self::B(b)
     }
     /// Creates an integer constant.
     pub fn int<I: Into<Int>>(i: I) -> Self {
-        Cst::I(i.into())
+        Self::I(i.into())
     }
     /// Creates a rational constant.
     pub fn rat<R: Into<Rat>>(r: R) -> Self {
-        Cst::R(r.into())
+        Self::R(r.into())
+    }
+
+    /// Unwraps a boolean constant.
+    pub fn as_bool(&self) -> Res<bool> {
+        match self {
+            Self::B(b) => Ok(*b),
+            _ => bail!("expected boolean, found `{}`", self),
+        }
+    }
+    /// Unwraps an integer constant.
+    pub fn as_int(&self) -> Res<&Int> {
+        match self {
+            Self::I(i) => Ok(i),
+            _ => bail!("expect integer, found `{}`", self),
+        }
+    }
+    /// Unwraps a rational constant.
+    pub fn as_rat(&self) -> Res<&Rat> {
+        match self {
+            Self::R(r) => Ok(r),
+            _ => bail!("expect integer, found `{}`", self),
+        }
     }
 }
 impl Expr2Smt<()> for Cst {
@@ -368,6 +390,8 @@ impl Op {
                 bail!("`{}` expects at most {} argument(s)", self, max)
             }
         }
+        // From now on we allow ourselves to `unwrap` as we know we have a legal number of
+        // arguments.
 
         let typ = match self {
             Self::Ite => {
@@ -461,6 +485,245 @@ impl Op {
         };
 
         Ok(typ)
+    }
+
+    /// Ite evaluation.
+    pub fn eval_ite(cnd: Cst, thn: Cst, els: Cst) -> Res<Cst> {
+        if cnd.as_bool()? {
+            Ok(thn)
+        } else {
+            Ok(els)
+        }
+    }
+    /// Implication evaluation.
+    pub fn eval_implies(first: Cst, mut tail: impl Iterator<Item = Cst>) -> Res<Cst> {
+        let mut prev = first;
+        loop {
+            // Is `prev` the last argument?
+            if let Some(next) = tail.next() {
+                // No, yield `true` if `prev` is false, implication is trivally true.
+                if !next.as_bool()? {
+                    break Ok(Cst::bool(true));
+                } else {
+                    prev = next;
+                    continue;
+                }
+            } else {
+                // `prev` is the last argument, previous ones were necessarily `true`.
+                // Implication evaluates to `prev`, the last argument.
+                break Ok(prev);
+            }
+        }
+    }
+
+    /// Arithmetic operator application.
+    pub fn eval_nary_binop(
+        binop: impl Fn(Cst, Cst) -> Res<Cst>,
+        fst: Cst,
+        snd: Cst,
+        tail: impl Iterator<Item = Cst>,
+    ) -> Res<Cst> {
+        let mut res = binop(fst, snd)?;
+        for cst in tail {
+            res = binop(res, cst)?
+        }
+        Ok(res)
+    }
+
+    /// Applies the operator to a vector of constants.
+    pub fn eval(self, args: Vec<Cst>) -> Res<Cst> {
+        let arg_count = args.len();
+        if arg_count < self.min_arity() {
+            bail!(
+                "`{}` expects at least {} argument(s)",
+                self,
+                self.min_arity(),
+            )
+        }
+        if let Some(max) = self.max_arity() {
+            if arg_count > max {
+                bail!("`{}` expects at most {} argument(s)", self, max)
+            }
+        }
+        // From now on we allow ourselves to `unwrap` as we know we have a legal number of
+        // arguments.
+        //
+        // Also, this runs after type-checking so we're not providing a lot of context on type
+        // errors since they should be mikino-level bugs, not user-level error we must provide
+        // feedback on.
+
+        let mut args = args.into_iter();
+
+        // Generates an error for an operator.
+        macro_rules! op_err {
+            (bin $(($real_op:expr))? $lft:ident $op:tt $rgt:ident) => ({
+                #[allow(unused_mut, unused_assignments)]
+                let mut op = stringify!($op).to_string();
+                $(
+                    op = $real_op.to_string();
+                )?
+                bail!(
+                    "cannot apply `{}` to `{}: {}` and `{}: {}`",
+                    op,
+                    $lft,
+                    $lft.typ(),
+                    $rgt,
+                    $rgt.typ(),
+                )
+            });
+            (un $op:tt $cst:expr) => {
+                bail!(
+                    "cannot apply `{}` to `{}: {}`",
+                    stringify!($op),
+                    $cst,
+                    $cst.typ(),
+                )
+            };
+        }
+
+        // Applies some operator to two arithmetic constants.
+        macro_rules! arith_op {
+            ($op:tt) => ({
+                let (fst, snd) = (args.next().unwrap(), args.next().unwrap());
+                Self::eval_nary_binop(
+                    |lft, rgt| arith_op!(bin lft $op rgt),
+                    fst,
+                    snd,
+                    args,
+                )
+            });
+            (rel $op:tt) => ({
+                let (fst, mut prev) = (args.next().unwrap(), args.next().unwrap());
+                let snd = prev.clone();
+                let mut res = arith_op!(rel fst <= snd)?;
+                if !res.as_bool()? {
+                    Ok(Cst::B(false))
+                } else {
+                    loop {
+                        if let Some(next) = args.next() {
+                            let current = next.clone();
+                            res = arith_op!(rel prev <= current)?;
+                            if !res.as_bool()? {
+                                break Ok(Cst::B(false));
+                            }
+                            prev = next;
+                            continue;
+                        } else {
+                            break Ok(Cst::B(true));
+                        }
+                    }
+                }
+            });
+            (bin $lft:ident $op:tt $rgt:ident) => (
+                match ($lft, $rgt) {
+                    (Cst::I(lft), Cst::I(rgt)) => Ok(Cst::I(lft $op rgt)),
+                    (Cst::R(lft), Cst::R(rgt)) => Ok(Cst::R(lft $op rgt)),
+                    (lft, rgt) => op_err!(bin lft $op rgt),
+                }
+            );
+            (rel $lft:ident $op:tt $rgt:ident) => (
+                match ($lft, $rgt) {
+                    (Cst::I(lft), Cst::I(rgt)) => Res::Ok(Cst::B(lft $op rgt)),
+                    (Cst::R(lft), Cst::R(rgt)) => Ok(Cst::B(lft $op rgt)),
+                    (lft, rgt) => op_err!(bin lft $op rgt),
+                }
+            );
+            (un $unop:tt $cst:expr) => (
+                match $cst {
+                    Cst::I(i) => Ok(Cst::I($unop i)),
+                    Cst::R(r) => Ok(Cst::R($unop r)),
+                    cst => op_err!(un $unop cst),
+                }
+            );
+        }
+
+        match self {
+            Self::Ite => Self::eval_ite(
+                args.next().unwrap(),
+                args.next().unwrap(),
+                args.next().unwrap(),
+            ),
+
+            Self::Implies => Self::eval_implies(args.next().unwrap(), args),
+
+            Self::Add => arith_op!(+),
+            Self::Sub => {
+                if arg_count == 1 {
+                    arith_op!(un - args.next().unwrap())
+                } else {
+                    arith_op!(-)
+                }
+            }
+            Self::Mul => arith_op!(*),
+            Self::Div => Self::eval_nary_binop(
+                |lft, rgt| match (lft, rgt) {
+                    (Cst::I(lft), Cst::I(rgt)) => Ok(Cst::R(Rat::new(lft, rgt))),
+                    (Cst::R(lft), Cst::R(rgt)) => Ok(Cst::R(lft / rgt)),
+                    (Cst::I(lft), Cst::R(rgt)) => Ok(Cst::R(Rat::new(lft, Int::one()) / rgt)),
+                    (Cst::R(lft), Cst::I(rgt)) => Ok(Cst::R(lft / Rat::new(rgt, Int::one()))),
+                    (lft, rgt) => op_err!(bin lft / rgt),
+                },
+                args.next().unwrap(),
+                args.next().unwrap(),
+                args,
+            ),
+            Self::IDiv => Self::eval_nary_binop(
+                |lft, rgt| match (lft, rgt) {
+                    (Cst::I(lft), Cst::I(rgt)) => Ok(Cst::I(lft / rgt)),
+                    (lft, rgt) => op_err!(bin(Self::IDiv) lft / rgt),
+                },
+                args.next().unwrap(),
+                args.next().unwrap(),
+                args,
+            ),
+            Self::Mod => arith_op!(%),
+
+            Self::Ge => arith_op!(rel >=),
+            Self::Le => arith_op!(rel <=),
+            Self::Gt => arith_op!(rel >),
+            Self::Lt => arith_op!(rel <),
+
+            // We just don't care, not even checking for types.
+            Self::Eq => {
+                let fst = args.next().unwrap();
+                loop {
+                    if let Some(next) = args.next() {
+                        if fst != next {
+                            break Ok(Cst::B(false));
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        break Ok(Cst::B(true));
+                    }
+                }
+            }
+
+            Self::Not => Ok(Cst::B(!args.next().unwrap().as_bool()?)),
+
+            Self::And => loop {
+                if let Some(next) = args.next() {
+                    if !next.as_bool()? {
+                        break Ok(Cst::B(false));
+                    } else {
+                        continue;
+                    }
+                } else {
+                    break Ok(Cst::B(true));
+                }
+            },
+            Self::Or => loop {
+                if let Some(next) = args.next() {
+                    if next.as_bool()? {
+                        break Ok(Cst::B(true));
+                    } else {
+                        continue;
+                    }
+                } else {
+                    break Ok(Cst::B(false));
+                }
+            },
+        }
     }
 }
 impl Expr2Smt<()> for Op {
@@ -751,6 +1014,84 @@ impl<V> PExpr<V> {
     /// clone, and want to assert the negation.
     pub fn negated(&self) -> NotPExpr<V> {
         self.into()
+    }
+
+    /// Bottom-up fold over an expression.
+    pub fn fold<'me, Acc>(
+        &'me self,
+        mut var_action: impl FnMut(&'me V) -> Acc,
+        mut cst_action: impl FnMut(&'me Cst) -> Acc,
+        mut app_action: impl FnMut(Op, Vec<Acc>) -> Acc,
+    ) -> Acc {
+        // Stores *frames*, *i.e.* info about an application:
+        // - the accumulator value when we reached this
+        // - its operator,
+        // - a vector of `Acc` corresponding to the fold result on the application's first
+        //   arguments,
+        // - an iterator over the remaining arguments.
+        //
+        // If frame `(op, res, todo)` is on the `stack`, it means we have fold-ed over the first
+        // `res.length()` arguments and `res` stores these results, we are currently going down the
+        // `res.length()+1`th argument, and the remaining arguments are given by the `todo`
+        // iterator.
+        let mut stack: Vec<(Op, Vec<Acc>, std::slice::Iter<PExpr<V>>)> = Vec::with_capacity(12);
+        let mut current = self;
+
+        'go_down: loop {
+            // If the current expression has kids, we will recursively fold them so `acc` below is
+            // not used. Otherwise, we call the relevant user-provided function to generate a value
+            // for `acc` and use it to `'go_up` below.
+            let mut acc = match current {
+                Self::Var(var) => var_action(var),
+                Self::Cst(cst) => cst_action(cst),
+                Self::App { op, args } => {
+                    let mut todo = args.iter();
+
+                    // At least one argument?
+                    if let Some(next) = todo.next() {
+                        // Need to go down `next` now.
+                        current = next;
+                        // Empty-for-now vector of accumulators.
+                        let res = Vec::with_capacity(args.len());
+                        // Push frame on the stack for when we go up.
+                        stack.push((*op, res, todo));
+
+                        continue 'go_down;
+                    } else {
+                        // No argument, this should actually not happen, but it's not a problem for
+                        // folding so we might as well just handle it.
+                        app_action(*op, vec![])
+                    }
+                }
+            };
+
+            // Go up the stack recursively, usind and updating `acc`. We `continue 'go_down`
+            // whenever we find a frame for an application that still has kids to fold.
+            'go_up: while let Some((op, mut res, mut todo)) = stack.pop() {
+                // `acc` is result obtained for the `res.length() + 1`th argument of the
+                // application.
+                res.push(acc);
+
+                // Any argument left to go down into?
+                if let Some(next) = todo.next() {
+                    // Need to handle it.
+                    current = next;
+                    // Don't forget to add the frame back.
+                    stack.push((op, res, todo));
+
+                    continue 'go_down;
+                } else {
+                    // Update current accumulator and keep going up.
+                    acc = app_action(op, res);
+
+                    continue 'go_up;
+                }
+            }
+
+            // Stack is empty, `acc` contains the result of folding over the whole expression
+            // (`self`).
+            return acc;
+        }
     }
 }
 impl<V: HasTyp> HasTyp for PExpr<V> {
