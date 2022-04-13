@@ -1305,3 +1305,25 @@ mod trait_impls {
         }
     }
 }
+
+/// A meta-variable.
+#[derive(Debug, Clone)]
+pub struct MetaVar {
+    /// Variable identifier.
+    pub ident: String,
+}
+impl From<String> for MetaVar {
+    fn from(ident: String) -> Self {
+        Self { ident }
+    }
+}
+impl MetaVar {
+    /// Constructor.
+    pub fn new(ident: impl Into<String>) -> Self {
+        Self {
+            ident: ident.into(),
+        }
+    }
+}
+/// A meta-expression.
+pub type MExpr = PExpr<MetaVar>;

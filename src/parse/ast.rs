@@ -151,8 +151,14 @@ impl<T> Deref for Spn<T> {
         &self.inner
     }
 }
+impl<'a> From<Spn<&'a str>> for Spn<String> {
+    fn from(spn: Spn<&'a str>) -> Self {
+        spn.map(|s| s.into())
+    }
+}
 
 /// AST for the term structure.
+#[derive(Debug, Clone)]
 pub enum Ast<'txt> {
     /// Spanned constant.
     Cst(Spn<Cst>),

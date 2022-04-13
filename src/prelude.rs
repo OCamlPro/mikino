@@ -4,19 +4,22 @@ pub(crate) use std::{
     collections::{BTreeMap as Map, BTreeSet as Set},
     fmt,
     io::Write,
-    ops::{Deref, DerefMut},
+    marker,
+    ops::{self, Deref, DerefMut},
+    time,
 };
 
 pub use either::Either;
 pub use error_chain::bail;
 pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
-pub use rsmt2::SmtRes;
+pub use rsmt2::{parse::SmtParser as RSmtParser, SmtConf, SmtRes, Solver as SmtSolver};
 
 pub use crate::{
-    build_decls, build_expr, build_trans, build_typ, check,
+    build_decls, build_expr, build_trans, build_typ,
+    check::{self, Solver},
     err::*,
-    expr::{self, HasTyp},
-    parse, trans,
+    expr::{self, HasTyp, Typ},
+    parse, script, trans,
 };
 
 /// Step index.

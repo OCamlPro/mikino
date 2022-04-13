@@ -20,7 +20,7 @@ crate::prelude!();
 use expr::{Expr, SExpr, SVar, Typ, Var};
 
 /// Variable declarations for transition systems.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Decls {
     /// Map from variable identifiers to types.
     id_to_typs: Map<String, Typ>,
@@ -67,6 +67,11 @@ impl Decls {
         Self {
             id_to_typs: Map::new(),
         }
+    }
+
+    /// True if `id` is declared.
+    pub fn contains(&self, id: impl AsRef<str>) -> bool {
+        self.id_to_typs.contains_key(id.as_ref())
     }
 
     /// Length of the longest identifier (used for formatting).
@@ -137,6 +142,28 @@ impl Decls {
     /// [`Var`]: ../expr/struct.Var.html (The Var struct)
     pub fn all<'a>(&'a self) -> impl Iterator<Item = Var> + 'a {
         self.id_to_typs.iter().map(|(id, typ)| Var::new(id, *typ))
+    }
+
+    /// Merges two variable declarations.
+    ///
+    /// Produces common variable declarations, if any.
+    pub fn merge(&mut self, that: &Self) -> Option<Map<String, (Typ, Typ)>> {
+        let mut clashes = None;
+
+        for (id, typ) in that.id_to_typs.iter() {
+            let old_typ = self.id_to_typs.insert(id.to_string(), *typ);
+            if let Some(old_typ) = old_typ {
+                if &old_typ != typ {
+                    let _ = self.id_to_typs.insert(id.to_string(), old_typ);
+                }
+                let _prev = clashes
+                    .get_or_insert_with(Map::new)
+                    .insert(id.into(), (old_typ, *typ));
+                debug_assert_eq!(_prev, None);
+            }
+        }
+
+        clashes
     }
 }
 

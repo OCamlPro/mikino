@@ -1,6 +1,6 @@
 //! Backend parser (SMT-LIB) and frontend parser (requires the `parser` feature).
 
-crate::prelude!();
+prelude!();
 
 use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
@@ -9,7 +9,7 @@ use trans::Decls;
 #[cfg(feature = "parser")]
 use trans::Sys;
 
-mod ast;
+pub mod ast;
 pub mod kw;
 
 #[cfg(all(test, feature = "parser"))]
@@ -167,6 +167,10 @@ peg::parser! {
         }
         // Error message.
         / expected!("identifier")
+
+        /// Double-quoted string.
+        pub rule dbl_quoted() -> &'input str
+        = "\"" str:$( ("\\\"" / [^'"'])* ) "\"" { str }
 
 
         /// Parses boolean constants.
@@ -329,21 +333,21 @@ peg::parser! {
 
         /// Parses an if-then-else.
         ///
-        /// No parens needed, for documentation see [`hsmt`].
+        /// No parens needed, for documentation see [`hsmt_expr`].
         pub rule hsmt_ite() -> Ast<'input>
         = quiet! {
             s:position!() "if" e:position!()
-            _ cnd:hsmt()
+            _ cnd:hsmt_expr()
             _ "{"
-            _ thn:hsmt()
+            _ thn:hsmt_expr()
             _ "}"
             _ elseif:(
-                "else" _ s:position!() "if" e:position!() _ cnd:hsmt() _ "{" _ thn:hsmt() _ "}" {
+                "else" _ s:position!() "if" e:position!() _ cnd:hsmt_expr() _ "{" _ thn:hsmt_expr() _ "}" {
                     (Span::new(s, e), cnd, thn)
                 }
             )*
             _ "else" _ "{"
-            _ els:hsmt()
+            _ els:hsmt_expr()
             _ "}" {
                 let ite = Op::Ite;
                 let els = elseif.into_iter().rev().fold(
@@ -361,7 +365,7 @@ peg::parser! {
         ///
         /// ```rust
         /// # use mikino_api::parse::rules::hsmt;
-        /// let ast = hsmt(
+        /// let ast = hsmt_expr(
         ///     "if a ⋀ n ≥ 10 { 'n = n - 1 } \
         ///     else if false { 'n > n } \
         ///     else { false }"
@@ -380,7 +384,7 @@ peg::parser! {
         ///
         /// ```rust
         /// use mikino_api::parse::rules::hsmt;
-        /// let ast = hsmt(
+        /// let ast = hsmt_expr(
         ///     "a ⋀ x ≥ 7 - m ⋁ if 7 = n + m { b_1 ⋁ b_2 } else { c }"
         /// ).unwrap();
         /// assert_eq!(
@@ -391,7 +395,7 @@ peg::parser! {
         ///     ",
         /// )
         /// ```
-        pub rule hsmt() -> Ast<'input>
+        pub rule hsmt_expr() -> Ast<'input>
         = ast:precedence! {
             // Implication, right associative.
             lft:@ _ s:position!() (
@@ -461,7 +465,7 @@ peg::parser! {
             cst:cst() {
                 Ast::cst(cst)
             }
-            "(" _ e:hsmt() _ ")" {
+            "(" _ e:hsmt_expr() _ ")" {
                 let mut e = e;
                 e.close();
                 e
@@ -577,10 +581,8 @@ peg::parser! {
         pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
         = quiet! {
             cands:(
-                _ s:position!() name:(
-                    "\"" name:$( ("\\\"" / [^'"'])* ) "\"" { name }
-                ) e:position!() _ ":" _
-                expr:hsmt()
+                _ s:position!() name:dbl_quoted() e:position!() _ ":" _
+                expr:hsmt_expr()
                 {
                     (Spn::new(name, (s, e)), expr)
                 }
@@ -602,14 +604,14 @@ peg::parser! {
         init_doc:outer_doc()
         _ init_s:position!() "init" init_e:position!() _ "{" _ hsmt_init:(
             quiet! {
-                init:(hsmt()) ++ (_ "," _) (",")? { init }
+                init:(hsmt_expr()) ++ (_ "," _) (",")? { init }
             }
             / expected!("comma-separated list of stateless expressions")
          ) _  "}"
         trans_doc:outer_doc()
         _ trans_s:position!() "trans" trans_e:position!() _ "{" _ hsmt_trans:(
             quiet! {
-                trans:(hsmt()) ++ (_ "," _) (",")? { trans }
+                trans:(hsmt_expr()) ++ (_ "," _) (",")? { trans }
             }
             / expected!("comma-separated list of stateful expressions")
          ) _ "}"
@@ -632,6 +634,148 @@ peg::parser! {
 
             Ok(trans::Sys::new(decls, init, trans, pos))
         }
+
+
+
+
+
+
+
+
+        /// A **non-empty** sequence of commands.
+        pub rule commands() -> PRes<ast::hsmt::Commands<Ast<'input>, Ast<'input>>>
+        =
+            head:command() tail:(_ cmd:command() { cmd })* {
+                let mut cmds = Vec::with_capacity(tail.len());
+                cmds.push(head?);
+                for cmd in tail {
+                    cmds.push(cmd?);
+                }
+                Ok(cmds)
+            }
+
+        /// Block parser.
+        pub rule block() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>
+        =
+            "{" commands:(_ cmd:command() { cmd })+ _ "}" {
+                let mut content = Vec::with_capacity(commands.len());
+                for command in commands {
+                    content.push(command?)
+                }
+                Ok(ast::hsmt::Block::new(content))
+            }
+        /// Check sat.
+        pub rule check_sat() -> PRes<ast::hsmt::CheckSat>
+        =
+            start:position!() "check_sat!" end:position!()
+            _ "("
+                // (_ key:$(ident()) _ ":" _ ""
+            _ ")" {
+                Ok(ast::hsmt::CheckSat::new((start, end), None, None))
+            }
+            /
+            start:position!() "check_sat!" end:position!()
+            _ "{"
+                // (_ key:$(ident()) _ ":" _ ""
+            _ "}" {
+                Ok(ast::hsmt::CheckSat::new((start, end), None, None))
+            }
+        /// Ite.
+        pub rule ite() -> PRes<ast::hsmt::Ite<Ast<'input>, Ast<'input>>>
+        =
+            start:position!() "if" end:position!()
+            _ cnd:(
+                cnd:ident() {
+                    let cnd = cnd.map(expr::MetaVar::new);
+                    Ok(Either::Left(cnd))
+                }
+                /
+                cnd:check_sat() { cnd.map(Either::Right) }
+            ) _ thn:block()
+            // Else branch
+            _ "else" _ els:block()
+            // Otherwise branch (timeout/unknown)
+            otw:(
+                _ "otherwise" _ otw:block() { otw }
+            )? {
+                let otw = if let Some(otw) = otw {
+                    Some(otw?)
+                } else {
+                    None
+                };
+                Ok(ast::hsmt::Ite::new((start, end), cnd?, thn?, els?, otw))
+            }
+
+
+
+        /// Query parser.
+        pub rule query() -> PRes<ast::hsmt::Query<Ast<'input>, Ast<'input>>>
+        =
+            q:block() { Ok(q?.into()) }
+            /
+            q:check_sat() { Ok(q?.into()) }
+            /
+            q:ite() { Ok(q?.into()) }
+
+
+
+
+        /// A `declare-const` let-binding.
+        pub rule const_decls() -> PRes<ast::hsmt::Vars>
+        =
+            start:position!() "vars" end:position!()
+            _ "{" _ decls:svars() _ "}" {
+                Ok(ast::hsmt::Vars::new((start, end), decls?))
+            }
+
+        /// A meta-binding.
+        pub rule mlet() -> PRes<ast::hsmt::MLet>
+        =
+            "let" _ lhs:ident() _ "=" _ query:check_sat() _ ";" {
+                Ok(ast::hsmt::MLet::new(lhs, query?))
+            }
+
+        /// An assert.
+        pub rule assert() -> PRes<ast::hsmt::Assert<Ast<'input>>>
+        =
+            "assert!" _ "(" _ expr:hsmt_expr() _ ")" {
+                Ok(ast::hsmt::Assert::new(expr))
+            }
+            /
+            "assert!" _ "{" _ expr:hsmt_expr() _ "}" {
+                Ok(ast::hsmt::Assert::new(expr))
+            }
+
+        /// An assert.
+        pub rule echo() -> PRes<ast::hsmt::Echo>
+        =
+            "echo!" _ "{" _ msg:dbl_quoted() _ "}" {
+                Ok(ast::hsmt::Echo::new(msg))
+            }
+            /
+            "echo!" _ "(" _ msg:dbl_quoted() _ ")" {
+                Ok(ast::hsmt::Echo::new(msg))
+            }
+
+        /// Command parser.
+        pub rule command() -> PRes<ast::hsmt::Command<Ast<'input>, Ast<'input>>>
+        =
+            cmd:const_decls() { Ok(cmd?.into()) }
+            /
+            cmd:mlet() { Ok(cmd?.into()) }
+            /
+            cmd:assert() { Ok(cmd?.into()) }
+            /
+            cmd:echo() { Ok(cmd?.into()) }
+            /
+            query:query() { Ok(query?.into()) }
+
+        /// Parses a hsmt script.
+        pub rule hsmt_script() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>
+        =
+            _ content:commands() _ {
+                Ok(ast::hsmt::Block::new(content?))
+            }
     }
 }
 
@@ -653,6 +797,43 @@ pub fn sys(txt: &str) -> Res<Sys> {
     let res: Res<Sys> = match rules::hsmt_sys(txt) {
         Ok(res) => match res {
             Ok(sys) => Ok(sys),
+            Err(e) => {
+                // println!("perror");
+                let span = e.span;
+                let (prev, row, col, line, next) = span.pretty_of(txt);
+                let err = Error::parse("", row, col, line, prev, next);
+                Err(err.extend(e.error.into_iter()))
+            }
+        },
+        Err(e) => {
+            // println!("peg parse error");
+            let span = Span::new(e.location.offset, e.location.offset);
+            let (prev, row, col, line, next) = span.pretty_of(txt);
+            let err = Error::parse("", row, col, line, prev, next);
+            Err(err.chain_err(|| format!("expected {}", e.expected)))
+        }
+    };
+    res.chain_err(|| "run mikino in 'demo' mode for more details about the syntax")
+}
+
+/// Parses a system, requires the `parser` feature.
+///
+/// Comments are one-line rust-style: `// ..\n`.
+///
+/// A system is composed of four `{ ... }` blocks each starting with a specific keyword:
+///
+/// - `svars { ... }`: the [state variables][rules::svars] of the system;
+///
+/// - `init { ... }`: the initial predicate, *i.e.* a stateless (no `'` prime) expression;
+///
+/// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
+///
+/// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
+#[cfg(feature = "parser")]
+pub fn script(txt: &str) -> Res<ast::hsmt::Block<Ast, Ast>> {
+    let res: Res<_> = match rules::hsmt_script(txt) {
+        Ok(res) => match res {
+            Ok(script) => Ok(script),
             Err(e) => {
                 println!("perror");
                 let span = e.span;

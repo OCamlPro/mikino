@@ -3,7 +3,7 @@
 /// Imports mikino's prelude.
 #[macro_export]
 macro_rules! prelude {
-    {} => { use $crate::prelude::*; };
+    { $($stuff:tt)* } => { use $crate::prelude::{*, $($stuff)*}; };
     { pub } => { pub use $crate::prelude::*; };
 }
 

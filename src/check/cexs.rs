@@ -4,7 +4,6 @@ crate::prelude!();
 
 use expr::{Cst, Typ, Var};
 use parse::Parser;
-use rsmt2::{parse::SmtParser as RSmtParser, SmtRes, Solver as SmtSolver};
 
 /// A counterexample.
 #[derive(Debug, Clone)]

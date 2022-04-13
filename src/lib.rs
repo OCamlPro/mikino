@@ -4,6 +4,7 @@
 
 pub extern crate rsmt2;
 
+#[macro_use]
 mod macros;
 
 pub mod prelude;
@@ -11,6 +12,7 @@ pub mod prelude;
 pub mod check;
 pub mod expr;
 pub mod parse;
+pub mod script;
 pub mod trans;
 
 /// Error-handling.

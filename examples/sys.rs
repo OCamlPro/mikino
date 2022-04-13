@@ -1,9 +1,11 @@
 fn run() {
     let input = mikino_api::DEMO;
 
-    for line in input.lines() {
+    println!("```");
+    for line in input.trim().lines() {
         println!("{}", line);
     }
+    println!("```");
 
     println!();
     println!();
