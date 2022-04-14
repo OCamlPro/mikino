@@ -168,6 +168,15 @@ peg::parser! {
         // Error message.
         / expected!("identifier")
 
+        /// Same as [`ident`], but allows dash (`-`) in non-leading position.
+        pub rule dash_ident() -> Spn<&'input str>
+        =
+            start:position!() id:$(
+                ident() ("-" ident())*
+            ) end:position!() {
+                Spn::new(id, (start, end))
+            }
+
         /// Double-quoted string.
         pub rule dbl_quoted() -> &'input str
         = "\"" str:$( ("\\\"" / [^'"'])* ) "\"" { str }
@@ -654,16 +663,48 @@ peg::parser! {
                 Ok(cmds)
             }
 
+        /// Command parser.
+        pub rule command() -> PRes<ast::hsmt::Command<Ast<'input>, Ast<'input>>>
+        =
+            cmd:set_options() { Ok(cmd?.into()) }
+            /
+            cmd:const_decls() { Ok(cmd?.into()) }
+            /
+            cmd:mlet() { Ok(cmd?.into()) }
+            /
+            cmd:assert() { Ok(cmd?.into()) }
+            /
+            cmd:echo() { Ok(cmd?.into()) }
+            /
+            query:query() { Ok(query?.into()) }
+
+        /// Query parser.
+        pub rule query() -> PRes<ast::hsmt::Query<Ast<'input>, Ast<'input>>>
+        =
+            q:block() { Ok(q?.into()) }
+            /
+            q:check_sat() { Ok(q?.into()) }
+            /
+            q:ite() { Ok(q?.into()) }
+            /
+            q:panic() { Ok(q?.into()) }
+
+
+
+
+
+
         /// Block parser.
         pub rule block() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>
         =
-            "{" commands:(_ cmd:command() { cmd })+ _ "}" {
+            "{" commands:(_ cmd:command() { cmd })* _ "}" {
                 let mut content = Vec::with_capacity(commands.len());
                 for command in commands {
                     content.push(command?)
                 }
                 Ok(ast::hsmt::Block::new(content))
             }
+
         /// Check sat.
         pub rule check_sat() -> PRes<ast::hsmt::CheckSat>
         =
@@ -680,24 +721,32 @@ peg::parser! {
             _ "}" {
                 Ok(ast::hsmt::CheckSat::new((start, end), None, None))
             }
+
         /// Ite.
         pub rule ite() -> PRes<ast::hsmt::Ite<Ast<'input>, Ast<'input>>>
         =
             start:position!() "if" end:position!()
             _ cnd:(
+                cnd:check_sat() { cnd.map(Either::Right) }
+                /
                 cnd:ident() {
                     let cnd = cnd.map(expr::MetaVar::new);
                     Ok(Either::Left(cnd))
                 }
-                /
-                cnd:check_sat() { cnd.map(Either::Right) }
             ) _ thn:block()
-            // Else branch
-            _ "else" _ els:block()
-            // Otherwise branch (timeout/unknown)
-            otw:(
-                _ "otherwise" _ otw:block() { otw }
+            tail:(
+                // Else branch
+                _ "else" _ els:block()
+                // Otherwise branch (timeout/unknown)
+                otw:(
+                    _ "otherwise" _ otw:block() { otw }
+                )? {
+                    (els, otw)
+                }
             )? {
+                let (els, otw) = tail.unwrap_or_else(
+                    || (Ok(ast::hsmt::Block::new(vec![])), None)
+                );
                 let otw = if let Some(otw) = otw {
                     Some(otw?)
                 } else {
@@ -706,25 +755,54 @@ peg::parser! {
                 Ok(ast::hsmt::Ite::new((start, end), cnd?, thn?, els?, otw))
             }
 
-
-
-        /// Query parser.
-        pub rule query() -> PRes<ast::hsmt::Query<Ast<'input>, Ast<'input>>>
+        /// A panic.
+        pub rule panic() -> PRes<ast::hsmt::Panic>
         =
-            q:block() { Ok(q?.into()) }
+            "panic!" _ "{" _ msg:dbl_quoted() _ "}" {
+                Ok(ast::hsmt::Panic::new(msg))
+            }
             /
-            q:check_sat() { Ok(q?.into()) }
-            /
-            q:ite() { Ok(q?.into()) }
+            "panic!" _ "(" _ msg:dbl_quoted() _ ")" {
+                Ok(ast::hsmt::Panic::new(msg))
+            }
 
 
 
+
+        /// A `set-option` key/value pair.
+        pub rule set_option() -> ast::hsmt::SetOption
+        =
+            key:dash_ident() _ ":"
+            _ start:position!() val:(
+                cst:cst() { Either::Left(cst.inner) }
+                /
+                s:dbl_quoted() { Either::Right(s.to_string()) }
+            ) end:position!() {
+                ast::hsmt::SetOption::new(key, Spn::new(val, (start, end)))
+            }
+
+        /// A sequence of `set-option`s.
+        pub rule set_options() -> PRes<ast::hsmt::SetOptions>
+        =
+            start:position!() ("set_options!"/"set_option!") end:position!()
+            _ "("
+                opts:(
+                    _ opt:set_option() _ { opt }
+                )++"," _ ","?
+            _ ")" {
+                Ok(ast::hsmt::SetOptions::new((start, end), opts))
+            }
 
         /// A `declare-const` let-binding.
         pub rule const_decls() -> PRes<ast::hsmt::Vars>
         =
             start:position!() "vars" end:position!()
             _ "{" _ decls:svars() _ "}" {
+                Ok(ast::hsmt::Vars::new((start, end), decls?))
+            }
+            /
+            start:position!() "vars!" end:position!()
+            _ "(" _ decls:svars() _ ")" {
                 Ok(ast::hsmt::Vars::new((start, end), decls?))
             }
 
@@ -746,7 +824,7 @@ peg::parser! {
                 Ok(ast::hsmt::Assert::new(expr))
             }
 
-        /// An assert.
+        /// An echo.
         pub rule echo() -> PRes<ast::hsmt::Echo>
         =
             "echo!" _ "{" _ msg:dbl_quoted() _ "}" {
@@ -756,19 +834,6 @@ peg::parser! {
             "echo!" _ "(" _ msg:dbl_quoted() _ ")" {
                 Ok(ast::hsmt::Echo::new(msg))
             }
-
-        /// Command parser.
-        pub rule command() -> PRes<ast::hsmt::Command<Ast<'input>, Ast<'input>>>
-        =
-            cmd:const_decls() { Ok(cmd?.into()) }
-            /
-            cmd:mlet() { Ok(cmd?.into()) }
-            /
-            cmd:assert() { Ok(cmd?.into()) }
-            /
-            cmd:echo() { Ok(cmd?.into()) }
-            /
-            query:query() { Ok(query?.into()) }
 
         /// Parses a hsmt script.
         pub rule hsmt_script() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>

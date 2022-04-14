@@ -1,9 +1,14 @@
 fn run() {
     let input = "
-vars {
+set_options!(
+    conservative-decls: true,
+    produce-models: true,
+)
+
+vars!(
     cnt0   cnt1   : int,
     reset0 reset1 : bool,
-}
+)
 
 assert!(
     cnt1 = if reset1 { 0 } else { cnt0 + 1 }
@@ -13,10 +18,30 @@ let is_sat = check_sat!();
 
 if is_sat {
     echo!(\"it's sat\")
+    vars!(
+        cnt2: int,
+        reset2: bool,
+    )
+    let sat_too = check_sat!();
+    if sat_too {
+        echo!(\"stuff\")
+    } else {}
 } else {
     echo!(\"so unsat :(\")
+    panic!(\"timeout or unknown result\")
 } otherwise {
-    echo!(\"timeout or unknown result\")
+    vars!(
+        cnt2: int,
+        reset2: bool,
+    )
+}
+
+assert!(
+    cnt2 = if reset2 { 0 } else { cnt1 + 1}
+)
+
+if check_sat!() {
+    echo!(\"does not compile\")
 }
     ";
 

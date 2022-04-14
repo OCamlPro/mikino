@@ -144,7 +144,7 @@ impl Decls {
         self.id_to_typs.iter().map(|(id, typ)| Var::new(id, *typ))
     }
 
-    /// Merges two variable declarations.
+    /// Merges two sets of variable declarations.
     ///
     /// Produces common variable declarations, if any.
     pub fn merge(&mut self, that: &Self) -> Option<Map<String, (Typ, Typ)>> {
@@ -164,6 +164,29 @@ impl Decls {
         }
 
         clashes
+    }
+
+    /// Intersection of two sets of variable declarations.
+    ///
+    /// Removes variables from `self` that do not appear or have a different type in `that`.
+    pub fn inter(&mut self, that: &Self) -> Option<Map<String, (Typ, Typ)>> {
+        let mut wrong_types = None;
+        self.id_to_typs.retain(|key, typ0| {
+            if let Some(typ1) = that.id_to_typs.get(key) {
+                if typ0 == typ1 {
+                    true
+                } else {
+                    let _prev = wrong_types
+                        .get_or_insert_with(Map::new)
+                        .insert(key.to_string(), (*typ0, *typ1));
+                    debug_assert_eq!(_prev, None);
+                    false
+                }
+            } else {
+                false
+            }
+        });
+        wrong_types
     }
 }
 

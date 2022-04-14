@@ -124,7 +124,7 @@ impl<T> Spn<T> {
     }
 
     /// Applies an operation to the inner value.
-    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Spn<U> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spn<U> {
         Spn {
             inner: f(self.inner),
             span: self.span,
@@ -151,8 +151,8 @@ impl<T> Deref for Spn<T> {
         &self.inner
     }
 }
-impl<'a> From<Spn<&'a str>> for Spn<String> {
-    fn from(spn: Spn<&'a str>) -> Self {
+impl From<Spn<&str>> for Spn<String> {
+    fn from(spn: Spn<&str>) -> Self {
         spn.map(|s| s.into())
     }
 }

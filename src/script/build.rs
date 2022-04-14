@@ -22,6 +22,7 @@ pub enum Frame<'input> {
     /// Ite info, when in the condition.
     IteCnd(
         MDecls,
+        Decls,
         Span,
         Block<Ast<'input>, Ast<'input>>,
         Block<Ast<'input>, Ast<'input>>,
@@ -30,6 +31,7 @@ pub enum Frame<'input> {
     /// Ite info, when in the then branch.
     IteThn(
         MDecls,
+        Decls,
         Span,
         Either<Spn<MetaVar>, CheckSat>,
         Block<Ast<'input>, Ast<'input>>,
@@ -38,20 +40,27 @@ pub enum Frame<'input> {
     /// Ite info, when in the else branch.
     IteEls(
         MDecls,
+        Decls,
         Span,
         Either<Spn<MetaVar>, CheckSat>,
-        Block<Expr, MExpr>,
+        (Block<Expr, MExpr>, Decls),
         Option<Block<Ast<'input>, Ast<'input>>>,
     ),
     /// Ite info, when in the otherwise branch.
     IteOtw(
         MDecls,
+        Decls,
         Span,
         Either<Spn<MetaVar>, CheckSat>,
-        Block<Expr, MExpr>,
-        Block<Expr, MExpr>,
+        (Block<Expr, MExpr>, Decls),
+        (Block<Expr, MExpr>, Decls),
     ),
 }
+
+/// Turns this on to show DEBUG information.
+///
+/// Probably should do this using the `log` crate.
+const DEBUG: bool = false;
 
 /// Turns a script AST into an actual script.
 pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
@@ -60,22 +69,27 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
     let mut decls = Decls::new();
     let mut meta_decls = MDecls::new();
 
-    let debug = true;
-
     macro_rules! show_meta {
         ($blah:tt $cmd:expr) => {
-            if debug {
+            if DEBUG {
                 let pref = str::repeat("  ", stack.len());
                 println!(
-                    "{}[{}] {}: {}",
+                    "{}[{}] {}: {}, panics: {}",
                     pref,
                     stringify!($blah),
                     stringify!($cmd),
-                    $cmd.desc()
+                    $cmd.desc(),
+                    $cmd.panics(),
                 );
                 if meta_decls.all().count() > 0 {
                     println!("{}- meta declarations:", pref);
                     for var in meta_decls.all() {
+                        println!("{}  {}: {}", pref, var, var.typ());
+                    }
+                }
+                if decls.all().count() > 0 {
+                    println!("{}- declarations:", pref);
+                    for var in decls.all() {
                         println!("{}  {}: {}", pref, var, var.typ());
                     }
                 }
@@ -86,6 +100,9 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
     'go_down: loop {
         show_meta!(down curr);
         let mut res: Command<Expr, MExpr> = match curr {
+            Command::SetOptions(opts) => opts.into(),
+            Command::Echo(e) => e.into(),
+            Command::Query(Query::Panic(p)) => p.into(),
             Command::Vars(v) => {
                 let clashes = decls.merge(&v.decls);
                 if let Some(clashes) = clashes {
@@ -110,7 +127,6 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                 let expr = a.expr.to_expr(&decls)?;
                 Assert::new(expr).into()
             }
-            Command::Echo(e) => e.into(),
 
             Command::Query(Query::Block(b)) => {
                 let count = b.content.len();
@@ -138,7 +154,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                     let mut err = format!(
                         "check sat mentions {} unknown literal{}:",
                         unknown.len(),
-                        plural
+                        plural,
                     );
                     for (idx, lit) in unknown.into_iter().enumerate() {
                         if idx > 0 {
@@ -164,6 +180,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                     curr = ite.thn.into();
                     stack.push(Frame::IteThn(
                         meta_decls.clone(),
+                        decls.clone(),
                         ite.span,
                         Either::Left(mvar),
                         ite.els,
@@ -175,6 +192,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                     curr = check_sat.into();
                     stack.push(Frame::IteCnd(
                         meta_decls.clone(),
+                        decls.clone(),
                         ite.span,
                         ite.thn,
                         ite.els,
@@ -210,39 +228,121 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                         continue 'go_up;
                     }
                 }
-                Some(Frame::IteCnd(mdecls, span, thn, els, otw)) => match res {
+                Some(Frame::IteCnd(mdecls, vdecls, span, thn, els, otw)) => match res {
                     Command::Query(Query::CheckSat(c)) => {
                         curr = thn.into();
-                        stack.push(Frame::IteThn(mdecls, span, Either::Right(c), els, otw));
+                        stack.push(Frame::IteThn(
+                            mdecls,
+                            vdecls,
+                            span,
+                            Either::Right(c),
+                            els,
+                            otw,
+                        ));
                         continue 'go_down;
                     }
                     res => panic!("[fatal] expected check sat, got {:#?}", res),
                 },
-                Some(Frame::IteThn(mdecls, span, cnd, els, otw)) => match res {
+                Some(Frame::IteThn(mdecls, vdecls, span, cnd, els, otw)) => match res {
                     Command::Query(Query::Block(thn)) => {
+                        let thn_decls = mem::replace(&mut decls, vdecls.clone());
+                        meta_decls = mdecls.clone();
                         curr = els.into();
-                        stack.push(Frame::IteEls(mdecls, span, cnd, thn, otw));
+                        stack.push(Frame::IteEls(
+                            mdecls,
+                            vdecls,
+                            span,
+                            cnd,
+                            (thn, thn_decls),
+                            otw,
+                        ));
                         continue 'go_down;
                     }
                     res => panic!("[fatal] expected block, got {:#?}", res),
                 },
-                Some(Frame::IteEls(mdecls, span, cnd, thn, otw)) => match res {
+                Some(Frame::IteEls(mdecls, vdecls, span, cnd, thn, otw)) => match res {
                     Command::Query(Query::Block(els)) => {
+                        meta_decls = mdecls.clone();
                         if let Some(otw) = otw {
+                            let els_decls = mem::replace(&mut decls, vdecls.clone());
                             curr = otw.into();
-                            stack.push(Frame::IteOtw(mdecls, span, cnd, thn, els));
+                            stack.push(Frame::IteOtw(
+                                mdecls,
+                                vdecls,
+                                span,
+                                cnd,
+                                thn,
+                                (els, els_decls),
+                            ));
                             continue 'go_down;
                         } else {
-                            meta_decls = mdecls;
+                            let (thn, thn_decls) = thn;
+
+                            match (thn.panics(), els.panics()) {
+                                (true, true) => {
+                                    let _ = decls.merge(&thn_decls);
+                                }
+                                (true, false) => {
+                                    decls = thn_decls;
+                                }
+                                (false, true) => {
+                                    decls = thn_decls;
+                                }
+                                (false, false) => {
+                                    let _ = decls.inter(&thn_decls);
+                                }
+                            }
                             res = Ite::new(span, cnd, thn, els, None).into();
                             continue 'go_up;
                         }
                     }
                     res => panic!("[fatal] expected block, got {:#?}", res),
                 },
-                Some(Frame::IteOtw(mdecls, span, cnd, thn, els)) => match res {
+                Some(Frame::IteOtw(
+                    mdecls,
+                    _vdecls,
+                    span,
+                    cnd,
+                    (thn, thn_decls),
+                    (els, els_decls),
+                )) => match res {
                     Command::Query(Query::Block(otw)) => {
                         meta_decls = mdecls;
+                        match (thn.panics(), els.panics(), otw.panics()) {
+                            // All branches panic.
+                            (true, true, true) => {
+                                let _ = decls.merge(&thn_decls);
+                                let _ = decls.merge(&els_decls);
+                            }
+
+                            // Only one branch does not panic.
+                            (true, true, false) => (),
+                            (false, true, true) => {
+                                decls = thn_decls;
+                            }
+                            (true, false, true) => {
+                                decls = els_decls;
+                            }
+
+                            // Two branches do not panic.
+                            (false, false, true) => {
+                                decls = thn_decls;
+                                let _ = decls.inter(&els_decls);
+                            }
+                            (false, true, false) => {
+                                let _ = decls.inter(&thn_decls);
+                            }
+                            (true, false, false) => {
+                                let _ = decls.inter(&els_decls);
+                            }
+
+                            // No branch panics.
+                            (false, false, false) => {
+                                let _ = decls.inter(&thn_decls);
+                                let _ = decls.inter(&els_decls);
+                            }
+                        }
+
                         res = Ite::new(span, cnd, thn, els, Some(otw)).into();
                         continue 'go_up;
                     }

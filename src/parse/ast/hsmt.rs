@@ -12,6 +12,72 @@ pub trait CommandExt {
     fn is_query(&self) -> bool;
     /// A short string description.
     fn desc(&self) -> String;
+    /// True if the command is guaranteed to end in a panic.
+    fn panics(&self) -> bool;
+}
+
+/// A set-option.
+#[derive(Debug, Clone)]
+pub struct SetOption {
+    /// Attribute key.
+    pub key: Spn<String>,
+    /// Attribute value.
+    pub val: Spn<Either<Cst, String>>,
+}
+impl fmt::Display for SetOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: ", self.key.inner)?;
+        match &self.val.inner {
+            Either::Left(cst) => cst.fmt(f),
+            Either::Right(s) => s.fmt(f),
+        }
+    }
+}
+impl SetOption {
+    /// Constructor.
+    pub fn new(key: impl Into<Spn<String>>, val: Spn<Either<Cst, String>>) -> Self {
+        Self {
+            key: key.into(),
+            val: val.into(),
+        }
+    }
+}
+/// A sequence of set-option-s.
+#[derive(Debug, Clone)]
+pub struct SetOptions {
+    /// Span of the `set_option!` keyword.
+    pub span: Span,
+    /// Sequence of set-options-s.
+    pub content: Vec<SetOption>,
+}
+impl CommandExt for SetOptions {
+    fn is_query(&self) -> bool {
+        false
+    }
+    fn desc(&self) -> String {
+        let mut s = format!("set_options!(");
+        for (idx, opt) in self.content.iter().enumerate() {
+            if idx > 0 {
+                s.push_str(", ");
+            }
+            s.push_str(&opt.to_string());
+        }
+        s.push(')');
+        s
+    }
+    fn panics(&self) -> bool {
+        false
+    }
+}
+
+impl SetOptions {
+    /// Constructor.
+    pub fn new(span: impl Into<Span>, content: Vec<SetOption>) -> Self {
+        Self {
+            span: span.into(),
+            content,
+        }
+    }
 }
 
 /// A sequence of commands between braces.
@@ -31,6 +97,9 @@ impl<E, ME> CommandExt for Block<E, ME> {
     }
     fn desc(&self) -> String {
         format!("block({})", self.content.len())
+    }
+    fn panics(&self) -> bool {
+        self.content.iter().any(Command::panics)
     }
 }
 impl<E, ME> ops::Index<usize> for Block<E, ME> {
@@ -59,6 +128,9 @@ impl<E> CommandExt for Assert<E> {
     fn desc(&self) -> String {
         format!("assert!")
     }
+    fn panics(&self) -> bool {
+        false
+    }
 }
 
 impl<E> Assert<E> {
@@ -79,11 +151,41 @@ impl CommandExt for Echo {
         false
     }
     fn desc(&self) -> String {
-        format!("echo(\"{}\")", self.msg)
+        format!("echo!(\"{}\")", self.msg)
+    }
+    fn panics(&self) -> bool {
+        false
     }
 }
 
 impl Echo {
+    /// Constructor.
+    pub fn new(msg: impl Into<String>) -> Self {
+        Self { msg: msg.into() }
+    }
+}
+
+/// Panics with a message.
+///
+/// Note that a panic **is** a query. It can return anything since it does not return.
+#[derive(Debug, Clone)]
+pub struct Panic {
+    /// Message.
+    pub msg: String,
+}
+impl CommandExt for Panic {
+    fn is_query(&self) -> bool {
+        true
+    }
+    fn desc(&self) -> String {
+        format!("panic!(\"{}\")", self.msg)
+    }
+    fn panics(&self) -> bool {
+        true
+    }
+}
+
+impl Panic {
     /// Constructor.
     pub fn new(msg: impl Into<String>) -> Self {
         Self { msg: msg.into() }
@@ -104,6 +206,9 @@ impl CommandExt for Vars {
     }
     fn desc(&self) -> String {
         format!("vars({})", self.decls.all().count())
+    }
+    fn panics(&self) -> bool {
+        false
     }
 }
 
@@ -132,6 +237,9 @@ impl CommandExt for MLet {
     fn desc(&self) -> String {
         format!("meta-let({})", self.lhs.inner)
     }
+    fn panics(&self) -> bool {
+        false
+    }
 }
 impl MLet {
     /// Constructor.
@@ -157,6 +265,9 @@ impl CommandExt for CheckSat {
     }
     fn desc(&self) -> String {
         format!("check-sat")
+    }
+    fn panics(&self) -> bool {
+        false
     }
 }
 
@@ -207,6 +318,11 @@ impl<E, ME> CommandExt for Ite<E, ME> {
     fn desc(&self) -> String {
         format!("ite")
     }
+    fn panics(&self) -> bool {
+        self.thn.panics()
+            && self.els.panics()
+            && self.otw.as_ref().map(|b| b.panics()).unwrap_or(true)
+    }
 }
 impl<E, ME> Ite<E, ME> {
     /// Unchecked constructor.
@@ -228,127 +344,6 @@ impl<E, ME> Ite<E, ME> {
     }
 }
 
-// impl Ite<Expr, MExpr> {
-//     /// Constructor, fails if `cnd` is an illegal condition (see [`Self.check_cnd_expr`]).
-//     ///
-//     /// Parameter `meta_env` is a function such that `meta_env(ident) = true` if `ident` is a
-//     /// meta-variable in the current environment. See also [`Self.check_cnd_expr`].
-//     pub fn new(
-//         meta_env: impl FnMut(&str) -> bool,
-//         cnd: Either<MExpr, CheckSat>,
-//         thn: Commands<Expr, MExpr>,
-//         els: Commands<Expr, MExpr>,
-//         otw: Option<Commands<Expr, MExpr>>,
-//     ) -> Result<Self, String> {
-//         if let Either::Left(cnd) = &cnd {
-//             Self::check_cnd_expr(cnd, meta_env)?
-//         }
-//         Ok(Self { cnd, thn, els, otw })
-//     }
-
-//     /// Checks that an [`Expr`] is a legal `Ite` condition.
-//     ///
-//     /// The expression is legal **iff**
-//     /// - it is purely boolean, *i.e.* only uses boolean operators, and
-//     /// - only mentions variables recognized by `meta_env`, or `True`/`False`.
-//     pub fn check_cnd_expr(
-//         cnd: &Expr,
-//         mut meta_env: impl FnMut(&str) -> bool,
-//     ) -> Result<(), String> {
-//         let mut unknown_ids: Option<Set<&str>> = None;
-//         let mut illegal_csts: Option<Set<&Cst>> = None;
-//         cnd.fold(
-//             |var: &Var| {
-//                 if !meta_env(var.id()) {
-//                     let _is_new = unknown_ids.get_or_insert_with(Set::new).insert(var.id());
-//                 }
-//             },
-//             |cst: &Cst| match cst {
-//                 Cst::B(_) => (),
-//                 _ => {
-//                     let _is_new = illegal_csts.get_or_insert_with(Set::new).insert(cst);
-//                 }
-//             },
-//             // Can't actually check much here, since type-checking requires accessing the kids.
-//             // **Currently**, applications cannot be non-bool without having non-bool leaves
-//             // (cst/var), and we're checking for that. So it's most definitely likely to be fine.
-//             |_op, _kid_accs| (),
-//         );
-
-//         let mut error = None;
-
-//         // Populates `error` if needed, ending with a newline.
-//         if let Some(unknown_ids) = unknown_ids {
-//             let plural = if unknown_ids.is_empty() { "" } else { "s" };
-//             let error = error.get_or_insert_with(|| String::with_capacity(203));
-//             if illegal_csts.is_some() {
-//                 error.push_str("- ")
-//             }
-//             error.push_str("unknown meta-variable");
-//             error.push_str(plural);
-
-//             let count = unknown_ids.len();
-//             for (idx, id) in unknown_ids.into_iter().enumerate() {
-//                 if idx == 0 {
-//                     error.push_str(" `");
-//                 } else {
-//                     if idx + 1 == count {
-//                         error.push_str(" and `");
-//                     } else {
-//                         error.push_str(", `");
-//                     }
-//                 }
-//                 error.push_str(&id);
-//                 error.push('`');
-//             }
-//             error.push('\n');
-//         }
-
-//         // Populates/augments `error if needed, ending with a newline.
-//         if let Some(illegal_csts) = illegal_csts {
-//             let plural = if illegal_csts.is_empty() { "" } else { "s" };
-//             let needs_sep = error.is_some();
-//             let error = error.get_or_insert_with(|| String::with_capacity(203));
-//             error.push_str("\n");
-//             if needs_sep {
-//                 error.push_str("- ");
-//             }
-//             error.push_str("illegal non-boolean constant");
-//             error.push_str(plural);
-
-//             let count = illegal_csts.len();
-//             for (idx, cst) in illegal_csts.into_iter().enumerate() {
-//                 if idx == 0 {
-//                     error.push_str(" `");
-//                 } else {
-//                     if idx + 1 == count {
-//                         error.push_str(" and `");
-//                     } else {
-//                         error.push_str(", `");
-//                     }
-//                 }
-//                 error.push_str(&cst.to_string());
-//                 error.push('`');
-//             }
-//             error.push('\n');
-//         }
-
-//         if let Some(mut error) = error {
-//             error.push_str(
-//                 "\n\
-// If-then-else conditions can only mention boolean operators and **meta**-variables,\n\
-// i.e. variables obtained by `let <ident> = <query>`, where `<query>` is typically a\n\
-// `check_sat`.\
-//             	",
-//             );
-//             error.shrink_to_fit();
-//             Err(error)
-//         } else {
-//             Ok(())
-//         }
-//     }
-// }
-
 /// Commands that can produce boolean results.
 #[derive(Debug, Clone)]
 pub enum Query<E, ME> {
@@ -364,6 +359,8 @@ pub enum Query<E, ME> {
     /// Note that trying to use result-less [`Ite`] as a result, in an [`MLet`] for instance, is a
     /// static error; not a runtime one.
     Ite(Ite<E, ME>),
+    /// Panic.
+    Panic(Panic),
 }
 impl<E, ME> CommandExt for Query<E, ME> {
     fn is_query(&self) -> bool {
@@ -371,6 +368,7 @@ impl<E, ME> CommandExt for Query<E, ME> {
             Self::Block(b) => b.is_query(),
             Self::CheckSat(q) => q.is_query(),
             Self::Ite(q) => q.is_query(),
+            Self::Panic(q) => q.is_query(),
         }
     }
     fn desc(&self) -> String {
@@ -378,6 +376,15 @@ impl<E, ME> CommandExt for Query<E, ME> {
             Self::Block(b) => b.desc(),
             Self::CheckSat(q) => q.desc(),
             Self::Ite(q) => q.desc(),
+            Self::Panic(q) => q.desc(),
+        }
+    }
+    fn panics(&self) -> bool {
+        match self {
+            Self::Block(b) => b.panics(),
+            Self::CheckSat(q) => q.panics(),
+            Self::Ite(q) => q.panics(),
+            Self::Panic(q) => q.panics(),
         }
     }
 }
@@ -397,6 +404,11 @@ impl<E, ME> From<Ite<E, ME>> for Query<E, ME> {
         Self::Ite(ite)
     }
 }
+impl<E, ME> From<Panic> for Query<E, ME> {
+    fn from(p: Panic) -> Self {
+        Self::Panic(p)
+    }
+}
 
 /// A list of commands.
 pub type Commands<E, ME> = Vec<Command<E, ME>>;
@@ -407,11 +419,16 @@ impl<E, ME> CommandExt for Commands<E, ME> {
     fn desc(&self) -> String {
         format!("sequenc of commands")
     }
+    fn panics(&self) -> bool {
+        self.iter().any(Command::panics)
+    }
 }
 
 /// Enumerates RSmt 2 commands.
 #[derive(Debug, Clone)]
 pub enum Command<E, ME> {
+    /// Set-option-s.
+    SetOptions(SetOptions),
     /// Constant declaration/definition.
     Vars(Vars),
     /// Meta-let, memorizes query results.
@@ -426,6 +443,7 @@ pub enum Command<E, ME> {
 impl<E, ME> CommandExt for Command<E, ME> {
     fn is_query(&self) -> bool {
         match self {
+            Self::SetOptions(c) => c.is_query(),
             Self::Vars(c) => c.is_query(),
             Self::MLet(c) => c.is_query(),
             Self::Assert(c) => c.is_query(),
@@ -435,6 +453,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
     }
     fn desc(&self) -> String {
         match self {
+            Self::SetOptions(c) => c.desc(),
             Self::Vars(c) => c.desc(),
             Self::MLet(c) => c.desc(),
             Self::Assert(c) => c.desc(),
@@ -442,8 +461,23 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Query(q) => q.desc(),
         }
     }
+    fn panics(&self) -> bool {
+        match self {
+            Self::SetOptions(c) => c.panics(),
+            Self::Vars(c) => c.panics(),
+            Self::MLet(c) => c.panics(),
+            Self::Assert(c) => c.panics(),
+            Self::Echo(c) => c.panics(),
+            Self::Query(q) => q.panics(),
+        }
+    }
 }
 
+impl<E, ME> From<SetOptions> for Command<E, ME> {
+    fn from(l: SetOptions) -> Self {
+        Self::SetOptions(l)
+    }
+}
 impl<E, ME> From<Vars> for Command<E, ME> {
     fn from(l: Vars) -> Self {
         Self::Vars(l)
@@ -477,6 +511,11 @@ impl<E, ME> From<Block<E, ME>> for Command<E, ME> {
 }
 impl<E, ME> From<Ite<E, ME>> for Command<E, ME> {
     fn from(q: Ite<E, ME>) -> Self {
+        Self::Query(q.into())
+    }
+}
+impl<E, ME> From<Panic> for Command<E, ME> {
+    fn from(q: Panic) -> Self {
         Self::Query(q.into())
     }
 }
