@@ -125,7 +125,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
             }
             Command::Assert(a) => {
                 let expr = a.expr.to_expr(&decls)?;
-                Assert::new(expr).into()
+                Assert::new(a.span, expr).into()
             }
 
             Command::Query(Query::Block(b)) => {

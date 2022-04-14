@@ -17,7 +17,7 @@ pub trait CommandExt {
 }
 
 /// A set-option.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetOption {
     /// Attribute key.
     pub key: Spn<String>,
@@ -43,7 +43,7 @@ impl SetOption {
     }
 }
 /// A sequence of set-option-s.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetOptions {
     /// Span of the `set_option!` keyword.
     pub span: Span,
@@ -81,7 +81,7 @@ impl SetOptions {
 }
 
 /// A sequence of commands between braces.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block<E, ME> {
     /// Block's content.
     pub content: Commands<E, ME>,
@@ -116,8 +116,10 @@ impl<E, ME> Block<E, ME> {
 }
 
 /// An assertion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assert<E> {
+    /// Span.
+    pub span: Span,
     /// Expression to assert.
     pub expr: E,
 }
@@ -135,13 +137,16 @@ impl<E> CommandExt for Assert<E> {
 
 impl<E> Assert<E> {
     /// Constructor.
-    pub fn new(expr: E) -> Self {
-        Self { expr }
+    pub fn new(span: impl Into<Span>, expr: E) -> Self {
+        Self {
+            span: span.into(),
+            expr,
+        }
     }
 }
 
 /// Echoes something.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Echo {
     /// Message.
     pub msg: String,
@@ -168,8 +173,10 @@ impl Echo {
 /// Panics with a message.
 ///
 /// Note that a panic **is** a query. It can return anything since it does not return.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Panic {
+    /// Span.
+    pub span: Span,
     /// Message.
     pub msg: String,
 }
@@ -187,13 +194,16 @@ impl CommandExt for Panic {
 
 impl Panic {
     /// Constructor.
-    pub fn new(msg: impl Into<String>) -> Self {
-        Self { msg: msg.into() }
+    pub fn new(span: impl Into<Span>, msg: impl Into<String>) -> Self {
+        Self {
+            span: span.into(),
+            msg: msg.into(),
+        }
     }
 }
 
 /// Some constant declarations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Vars {
     /// Declaration span.
     pub span: Span,
@@ -223,7 +233,7 @@ impl Vars {
 }
 
 /// A meta let-binding, used to memorize the result of a [`Query`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MLet {
     /// Identifier we're binding.
     pub lhs: Spn<String>,
@@ -250,7 +260,7 @@ impl MLet {
 }
 
 /// A check sat ([`Query`]).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckSat {
     /// Keyword span.
     pub span: Span,
@@ -290,7 +300,7 @@ impl CheckSat {
 ///
 /// `Ite` is a [`Query`] because it **can** produce a result. Namely, if all of its branches end
 /// with a check sat.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ite<E, ME> {
     /// Span of the `if`.
     pub span: Span,
@@ -345,7 +355,7 @@ impl<E, ME> Ite<E, ME> {
 }
 
 /// Commands that can produce boolean results.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Query<E, ME> {
     /// A block of commands.
     ///
@@ -425,7 +435,7 @@ impl<E, ME> CommandExt for Commands<E, ME> {
 }
 
 /// Enumerates RSmt 2 commands.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command<E, ME> {
     /// Set-option-s.
     SetOptions(SetOptions),

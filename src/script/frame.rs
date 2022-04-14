@@ -49,6 +49,18 @@ impl<'script, E, ME> Block<'script, E, ME> {
         Self { block, current: 0 }
     }
 }
+/// Does not return the [`self.current`] command, returns the next one.
+impl<'script, E, ME> Iterator for Block<'script, E, ME> {
+    type Item = &'script hsmt::Command<E, ME>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current + 1 < self.block.content.len() {
+            self.current += 1;
+            Some(&self.block.content[self.current])
+        } else {
+            None
+        }
+    }
+}
 
 /// Derivative of an [`MLet`].
 ///
@@ -102,15 +114,35 @@ impl<'script, E, ME> Frame<'script> for Ite<'script, E, ME> {
 }
 
 impl<'script, E, ME> Ite<'script, E, ME> {
-    /// Constructor for an exploration of the condition.
+    /// Constructor.
     ///
     /// Fails if the condition of the [`Ite`] is not a check sat.
-    pub fn new_cnd(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
-        if ite.cnd.is_left() {
-            bail!("cannot explore the condition of an if-then-else with a non-check-sat condition")
+    pub fn new(ite: &'script hsmt::Ite<E, ME>, pos: ItePos) -> Res<Self> {
+        match pos {
+            ItePos::Cnd => {
+                if ite.cnd.is_left() {
+                    bail!("cannot explore the condition of an if-then-else with a non-check-sat condition")
+                }
+            }
+            ItePos::Thn | ItePos::Els | ItePos::Otw => (),
         }
-        let pos = ItePos::Cnd;
         Ok(Self { ite, pos })
+    }
+    /// Constructor for an exploration of the condition.
+    pub fn new_cnd(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+        Self::new(ite, ItePos::Cnd)
+    }
+    /// Constructor for an exploration of the then branch.
+    pub fn new_thn(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+        Self::new(ite, ItePos::Thn)
+    }
+    /// Constructor for an exploration of the else branch.
+    pub fn new_els(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+        Self::new(ite, ItePos::Els)
+    }
+    /// Constructor for an exploration of the otherwise branch.
+    pub fn new_otw(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+        Self::new(ite, ItePos::Otw)
     }
 }
 

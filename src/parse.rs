@@ -758,12 +758,14 @@ peg::parser! {
         /// A panic.
         pub rule panic() -> PRes<ast::hsmt::Panic>
         =
-            "panic!" _ "{" _ msg:dbl_quoted() _ "}" {
-                Ok(ast::hsmt::Panic::new(msg))
+            start:position!() "panic!" end:position!()
+            _ "{" _ msg:dbl_quoted() _ "}" {
+                Ok(ast::hsmt::Panic::new((start, end), msg))
             }
             /
-            "panic!" _ "(" _ msg:dbl_quoted() _ ")" {
-                Ok(ast::hsmt::Panic::new(msg))
+            start:position!() "panic!" end:position!()
+            _ "(" _ msg:dbl_quoted() _ ")" {
+                Ok(ast::hsmt::Panic::new((start, end), msg))
             }
 
 
@@ -816,12 +818,14 @@ peg::parser! {
         /// An assert.
         pub rule assert() -> PRes<ast::hsmt::Assert<Ast<'input>>>
         =
-            "assert!" _ "(" _ expr:hsmt_expr() _ ")" {
-                Ok(ast::hsmt::Assert::new(expr))
+            start:position!() "assert!" end:position!()
+            _ "(" _ expr:hsmt_expr() _ ")" {
+                Ok(ast::hsmt::Assert::new((start, end), expr))
             }
             /
-            "assert!" _ "{" _ expr:hsmt_expr() _ "}" {
-                Ok(ast::hsmt::Assert::new(expr))
+            start:position!() "assert!" end:position!()
+            _ "{" _ expr:hsmt_expr() _ "}" {
+                Ok(ast::hsmt::Assert::new((start, end), expr))
             }
 
         /// An echo.
@@ -860,16 +864,7 @@ peg::parser! {
 #[cfg(feature = "parser")]
 pub fn sys(txt: &str) -> Res<Sys> {
     let res: Res<Sys> = match rules::hsmt_sys(txt) {
-        Ok(res) => match res {
-            Ok(sys) => Ok(sys),
-            Err(e) => {
-                // println!("perror");
-                let span = e.span;
-                let (prev, row, col, line, next) = span.pretty_of(txt);
-                let err = Error::parse("", row, col, line, prev, next);
-                Err(err.extend(e.error.into_iter()))
-            }
-        },
+        Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {
             // println!("peg parse error");
             let span = Span::new(e.location.offset, e.location.offset);
@@ -897,18 +892,9 @@ pub fn sys(txt: &str) -> Res<Sys> {
 #[cfg(feature = "parser")]
 pub fn script(txt: &str) -> Res<ast::hsmt::Block<Ast, Ast>> {
     let res: Res<_> = match rules::hsmt_script(txt) {
-        Ok(res) => match res {
-            Ok(script) => Ok(script),
-            Err(e) => {
-                println!("perror");
-                let span = e.span;
-                let (prev, row, col, line, next) = span.pretty_of(txt);
-                let err = Error::parse("", row, col, line, prev, next);
-                Err(err.extend(e.error.into_iter()))
-            }
-        },
+        Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {
-            println!("peg parse error");
+            // println!("peg parse error");
             let span = Span::new(e.location.offset, e.location.offset);
             let (prev, row, col, line, next) = span.pretty_of(txt);
             let err = Error::parse("", row, col, line, prev, next);

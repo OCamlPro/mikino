@@ -1307,7 +1307,7 @@ mod trait_impls {
 }
 
 /// A meta-variable.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetaVar {
     /// Variable identifier.
     pub ident: String,

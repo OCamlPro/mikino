@@ -39,6 +39,20 @@ impl PError {
         self.error = self.error.chain_err(err);
         self
     }
+
+    /// Turns itself in a nice error.
+    pub fn into_error(self, txt: &str) -> ErrorChain {
+        let span = self.span;
+        let (prev, row, col, line, next) = span.pretty_of(txt);
+        let err = Error::parse("", row, col, line, prev, next);
+        err.extend(self.error.into_iter())
+    }
+
+    /// Turns itself in a nice error.
+    pub fn new_error(span: Span, txt: &str, msg: impl Into<String>) -> Error {
+        let (prev, row, col, line, next) = span.pretty_of(txt);
+        Error::parse(msg, row, col, line, prev, next)
+    }
 }
 
 /// Parse result.
@@ -46,7 +60,7 @@ pub type PRes<T> = Result<T, PError>;
 
 /// A span in the input text.
 #[readonly::make]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     /// Span's start (inclusive).
     pub start: usize,
@@ -116,6 +130,12 @@ pub struct Spn<T> {
     /// Span.
     pub span: Span,
 }
+impl<T: PartialEq> PartialEq for Spn<T> {
+    fn eq(&self, that: &Self) -> bool {
+        self.inner == that.inner
+    }
+}
+impl<T: Eq> Eq for Spn<T> {}
 impl<T> Spn<T> {
     /// Constructor.
     pub fn new(inner: T, span: impl Into<Span>) -> Self {
@@ -158,7 +178,7 @@ impl From<Spn<&str>> for Spn<String> {
 }
 
 /// AST for the term structure.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ast<'txt> {
     /// Spanned constant.
     Cst(Spn<Cst>),

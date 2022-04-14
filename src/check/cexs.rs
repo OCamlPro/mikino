@@ -146,8 +146,48 @@ impl<'sys> Cexs<'sys> {
     }
 }
 
-/// Type alias for rsmt2's solver equipped with our parser.
-pub type Solver = SmtSolver<SmtParser>;
+/// Wrapper for rsmt2's solver equipped with our parser.
+pub struct Solver {
+    solver: SmtSolver<SmtParser>,
+}
+impl Solver {
+    /// Constructor.
+    pub fn new(z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
+        let z3_cmd = z3_cmd.as_ref();
+        let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
+        let z3_cmd = split_cmd
+            .next()
+            .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
+            .trim();
+        let mut conf = SmtConf::z3(z3_cmd);
+
+        for opt in split_cmd {
+            let opt = opt.trim();
+            if !opt.is_empty() {
+                conf.option(opt);
+            }
+        }
+
+        let mut solver = conf
+            .spawn(check::cexs::SmtParser)
+            .chain_err(|| "while spawning z3 solver")?;
+        if let Some(path) = tee {
+            solver.path_tee(path.as_ref())?
+        }
+        Ok(Self { solver })
+    }
+}
+impl Deref for Solver {
+    type Target = SmtSolver<SmtParser>;
+    fn deref(&self) -> &Self::Target {
+        &self.solver
+    }
+}
+impl DerefMut for Solver {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.solver
+    }
+}
 
 /// SMT-LIB parser for expressions, idents, types...
 #[derive(Debug, Clone, Copy)]

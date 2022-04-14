@@ -20,7 +20,7 @@ crate::prelude!();
 use expr::{Expr, SExpr, SVar, Typ, Var};
 
 /// Variable declarations for transition systems.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decls {
     /// Map from variable identifiers to types.
     id_to_typs: Map<String, Typ>,

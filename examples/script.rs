@@ -99,6 +99,8 @@ if check_sat!() {
         }
     };
 
+    // let script = mikino_api::script::Script::new(script);
+
     println!("success");
 }
 

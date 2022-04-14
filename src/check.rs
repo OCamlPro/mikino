@@ -2,7 +2,7 @@
 
 crate::prelude!();
 
-use rsmt2::{print::Expr2Smt, SmtConf};
+use rsmt2::print::Expr2Smt;
 
 use expr::{Expr, Var};
 use trans::Sys;
@@ -212,32 +212,8 @@ pub struct InternalChecker<'sys> {
 }
 impl<'sys> InternalChecker<'sys> {
     /// Constructor.
-    pub fn new(
-        sys: &'sys Sys,
-        z3_cmd: impl Into<String>,
-        tee: Option<impl AsRef<str>>,
-    ) -> Res<Self> {
-        let z3_cmd = z3_cmd.into();
-        let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
-        let z3_cmd = split_cmd
-            .next()
-            .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
-            .trim();
-        let mut conf = SmtConf::z3(z3_cmd);
-
-        for opt in split_cmd {
-            let opt = opt.trim();
-            if !opt.is_empty() {
-                conf.option(opt);
-            }
-        }
-
-        let mut solver = conf
-            .spawn(cexs::SmtParser)
-            .chain_err(|| "while spawning z3 solver")?;
-        if let Some(path) = tee {
-            solver.path_tee(path.as_ref())?
-        }
+    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
+        let solver = Solver::new(z3_cmd, tee)?;
         let vars = sys.decls().all().collect();
         Ok(Self { solver, sys, vars })
     }
@@ -350,6 +326,11 @@ impl<'sys> InternalChecker<'sys> {
         let res = self.solver.check_sat()?;
         Ok(res)
     }
+
+    /// Accessor for the underlying solver.
+    pub fn solver(&mut self) -> &mut Solver {
+        &mut self.solver
+    }
 }
 
 /// Base (init) checker.
@@ -359,11 +340,7 @@ pub struct Base<'sys> {
 }
 impl<'sys> Base<'sys> {
     /// Constructor.
-    pub fn new(
-        sys: &'sys Sys,
-        z3_cmd: impl Into<String>,
-        tee: Option<impl AsRef<str>>,
-    ) -> Res<Self> {
+    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
         let tee = tee.map(|s| format!("{}/base.smt2", s.as_ref()));
         Ok(Self {
             checker: InternalChecker::new(sys, z3_cmd, tee)?,
@@ -387,11 +364,7 @@ pub struct Step<'sys> {
 }
 impl<'sys> Step<'sys> {
     /// Constructor.
-    pub fn new(
-        sys: &'sys Sys,
-        z3_cmd: impl Into<String>,
-        tee: Option<impl AsRef<str>>,
-    ) -> Res<Self> {
+    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
         let tee = tee.map(|s| format!("{}/step.smt2", s.as_ref()));
         Ok(Self {
             checker: InternalChecker::new(sys, z3_cmd, tee)?,
@@ -468,7 +441,7 @@ impl<'sys> Bmc<'sys> {
     /// Constructor.
     pub fn new(
         sys: &'sys Sys,
-        z3_cmd: impl Into<String>,
+        z3_cmd: impl AsRef<str>,
         tee: Option<impl AsRef<str>>,
         res: BmcRes<'sys>,
     ) -> Res<Self> {
