@@ -2,7 +2,7 @@
 
 crate::prelude!();
 
-use super::QueryRes;
+use super::{CurrentCmd, QueryRes};
 use parse::ast::hsmt;
 
 /// An action that happens when going up the frame stack.
@@ -21,11 +21,9 @@ pub enum UpRes<'script> {
 }
 
 /// Frame trait.
-pub trait Frame<'s> {
-    /// Type of commands produced by this frame.
-    type Output;
+pub trait Frame<'s, E, ME> {
     /// Produces the current command.
-    fn current(&self) -> Res<Self::Output>;
+    fn current(&self) -> Res<CurrentCmd<'s, E, ME>>;
 }
 
 /// Derivative of a block.
@@ -36,10 +34,10 @@ pub struct Block<'script, E, ME> {
     /// Index of the current command in the block.
     pub current: usize,
 }
-impl<'script, E, ME> Frame<'script> for Block<'script, E, ME> {
-    type Output = &'script hsmt::Command<E, ME>;
-    fn current(&self) -> Res<Self::Output> {
-        Ok(&self.block[self.current])
+impl<'script, E, ME> Frame<'script, E, ME> for Block<'script, E, ME> {
+    fn current(&self) -> Res<CurrentCmd<'script, E, ME>> {
+        let current = &self.block[self.current];
+        Ok(current.into())
     }
 }
 
@@ -49,13 +47,14 @@ impl<'script, E, ME> Block<'script, E, ME> {
         Self { block, current: 0 }
     }
 }
-/// Does not return the [`self.current`] command, returns the next one.
+
 impl<'script, E, ME> Iterator for Block<'script, E, ME> {
     type Item = &'script hsmt::Command<E, ME>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current + 1 < self.block.content.len() {
+        if self.current < self.block.content.len() {
+            let res = Some(&self.block.content[self.current]);
             self.current += 1;
-            Some(&self.block.content[self.current])
+            res
         } else {
             None
         }
@@ -100,15 +99,33 @@ pub struct Ite<'script, E, ME> {
     /// Current position in the [`Ite`].
     pub pos: ItePos,
 }
-impl<'script, E, ME> Frame<'script> for Ite<'script, E, ME> {
-    type Output = &'script hsmt::CheckSat;
-    fn current(&self) -> Res<Self::Output> {
+impl<'script, E, ME> Frame<'script, E, ME> for Ite<'script, E, ME> {
+    fn current(&self) -> Res<CurrentCmd<'script, E, ME>> {
         match self.pos {
-            ItePos::Cnd => Ok(self.ite.cnd.as_ref().right().ok_or(
-                "trying to access query condition of if-then-else, \
+            ItePos::Cnd => Ok(self
+                .ite
+                .cnd
+                .as_ref()
+                .right()
+                .ok_or(
+                    "trying to access query condition of if-then-else, \
                 but condition is an expression",
-            )?),
-            _ => todo!(),
+                )?
+                .into()),
+            ItePos::Thn => {
+                let curr = &self.ite.thn;
+                Ok(curr.into())
+            }
+            ItePos::Els => {
+                let curr = &self.ite.els;
+                Ok(curr.into())
+            }
+            ItePos::Otw => Ok(self
+                .ite
+                .otw
+                .as_ref()
+                .ok_or("trying to access otherwise branch of if-then-else, but there is no otherwise branch")?
+                .into()),
         }
     }
 }
@@ -154,12 +171,11 @@ pub enum Query<'script, E, ME> {
     /// [`Ite`] derivative.
     Ite(Ite<'script, E, ME>),
 }
-impl<'script, E, ME> Frame<'script> for Query<'script, E, ME> {
-    type Output = Either<&'script hsmt::Command<E, ME>, &'script hsmt::CheckSat>;
-    fn current(&self) -> Res<Self::Output> {
+impl<'script, E, ME> Frame<'script, E, ME> for Query<'script, E, ME> {
+    fn current(&self) -> Res<CurrentCmd<'script, E, ME>> {
         match self {
-            Self::Block(block) => block.current().map(Either::Left),
-            Self::Ite(ite) => ite.current().map(Either::Right),
+            Self::Block(block) => block.current(),
+            Self::Ite(ite) => ite.current(),
         }
     }
 }
@@ -182,11 +198,13 @@ pub enum Command<'script, E, ME> {
     /// [`Query`] derivative.
     Query(Query<'script, E, ME>),
 }
-impl<'script, E, ME> Frame<'script> for Command<'script, E, ME> {
-    type Output = Either<&'script hsmt::Command<E, ME>, &'script hsmt::CheckSat>;
-    fn current(&self) -> Res<Self::Output> {
+impl<'script, E, ME> Frame<'script, E, ME> for Command<'script, E, ME> {
+    fn current(&self) -> Res<CurrentCmd<'script, E, ME>> {
         match self {
-            Self::MLet(_mlet) => bail!("[fatal] meta-let has no notion of current command"),
+            Self::MLet(mlet) => {
+                let rhs = &mlet.mlet.rhs;
+                Ok(rhs.into())
+            }
             Self::Query(query) => query.current(),
         }
     }

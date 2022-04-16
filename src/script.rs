@@ -2,13 +2,16 @@
 
 prelude!();
 
-use expr::{Expr, MExpr};
-use parse::ast::hsmt::*;
-
 use crate::parse::PError;
+
+use expr::{Expr, MExpr};
+use frame::Frame;
+use parse::ast::hsmt::*;
 
 pub mod build;
 pub mod frame;
+
+const DEBUG: bool = false;
 
 // use frame::Frame;
 
@@ -20,18 +23,109 @@ pub enum Outcome {
     /// Panic.
     Panic(parse::Span, String),
 }
+impl Outcome {
+    /// Turns itself in a pretty string representation.
+    pub fn pretty(&self, txt: &str, style: impl Style) -> String {
+        match self {
+            Self::Success => style.green("success").to_string(),
+            Self::Panic(span, msg) => {
+                format!(
+                    "execution {} with `{}` {}",
+                    style.red("panicked"),
+                    msg,
+                    span.pretty_ml_of(txt, style, ""),
+                )
+            }
+        }
+    }
+}
 
 /// A step result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// Check sat result.
-    CheckRes(parse::Span, bool),
+    CheckRes(parse::Span, CheckSatResEnum),
     /// Something to print.
     Echo(Echo),
     /// Nothing observable happened.
     Nothing,
     /// Done, with an outcome.
     Done(Outcome),
+}
+impl Step {
+    /// Updates a step result.
+    pub fn update(&mut self, step: impl Into<Step>) -> Res<()> {
+        let step = step.into();
+        *self = match (&self, step) {
+            (Self::Nothing, step) => step,
+            (_, Self::Nothing) => return Ok(()),
+            (lft, rgt) => {
+                bail!("[fatal] illegal `Step::update({:?}, {:?})`", lft, rgt)
+            }
+        };
+        Ok(())
+    }
+
+    /// Pretty representation.
+    pub fn pretty(&self, txt: &str, style: impl Style) -> Option<String> {
+        let s = match self {
+            Self::CheckRes(span, check_res) => {
+                let (_, line, col, _, _) = span.pretty_of(txt);
+                let res = match check_res {
+                    CheckSatResEnum::True => style.green("sat"),
+                    CheckSatResEnum::False => style.green("unsat"),
+                    CheckSatResEnum::Timeout => style.red("timeout"),
+                    CheckSatResEnum::Unknown => style.red("unknown"),
+                };
+                format!(
+                    "[{}@{}] {}",
+                    style.under("check_sat"),
+                    style.bold(&format!("{}:{}", line, col)),
+                    res,
+                )
+            }
+            Self::Echo(msg) => {
+                let (_, line, col, _, _) = msg.span.pretty_of(txt);
+                format!(
+                    "[{}@{}] {}",
+                    style.under("echo"),
+                    style.bold(&format!("{}:{}", line, col)),
+                    msg.msg,
+                )
+            }
+            Self::Nothing => {
+                return None;
+            }
+            Self::Done(out) => out.pretty(txt, style),
+        };
+        Some(s)
+    }
+
+    /// True if the step result is nothing.
+    pub fn is_nothing(&self) -> bool {
+        match self {
+            Self::Nothing => true,
+            Self::Echo(_) | Self::CheckRes(_, _) | Self::Done(_) => false,
+        }
+    }
+}
+impl From<Outcome> for Step {
+    fn from(out: Outcome) -> Self {
+        Self::Done(out)
+    }
+}
+impl From<CheckSatRes> for Step {
+    fn from(c: CheckSatRes) -> Self {
+        Self::CheckRes(c.span, c.res)
+    }
+}
+impl From<QueryRes> for Step {
+    fn from(res: QueryRes) -> Self {
+        match res {
+            QueryRes::None => Self::Nothing,
+            QueryRes::CheckSat(c) => c.into(),
+        }
+    }
 }
 
 /// A check sat result.
@@ -46,6 +140,18 @@ pub enum CheckSatResEnum {
     /// Unknown result.
     Unknown,
 }
+impl fmt::Display for CheckSatResEnum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::True => "sat",
+            Self::False => "unsat",
+            Self::Timeout => "timeout",
+            Self::Unknown => "unknown",
+        };
+        s.fmt(f)
+    }
+}
+
 /// A check sat result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckSatRes {
@@ -80,22 +186,6 @@ impl CheckSatRes {
             }
         };
         Ok(Self { span, res })
-    }
-
-    /// Turns itself into either a step result or an outcome.
-    ///
-    /// Used for check sat results not caught by a meta-variable.
-    pub fn handle(self) -> Either<Step, Outcome> {
-        match self.res {
-            CheckSatResEnum::True => Either::Left(Step::CheckRes(self.span, true)),
-            CheckSatResEnum::False => Either::Left(Step::CheckRes(self.span, false)),
-            CheckSatResEnum::Timeout => {
-                Either::Right(Outcome::Panic(self.span, "uncaught timeout".into()))
-            }
-            CheckSatResEnum::Unknown => {
-                Either::Right(Outcome::Panic(self.span, "uncaught unknown result".into()))
-            }
-        }
     }
 }
 
@@ -134,25 +224,34 @@ impl QueryRes {
 
 /// Current command.
 #[derive(Debug, Clone)]
-pub enum CurrentCmd<'s> {
+pub enum CurrentCmd<'s, E, ME> {
     /// Command.
-    C(&'s Command<Expr, MExpr>),
+    C(&'s Command<E, ME>),
+    /// Block.
+    B(&'s Block<E, ME>),
     /// Query.
-    Q(&'s Query<Expr, MExpr>),
+    Q(&'s Query<E, ME>),
     /// Check sat.
     Cs(&'s CheckSat),
 }
-impl<'s> From<&'s Command<Expr, MExpr>> for CurrentCmd<'s> {
-    fn from(c: &'s Command<Expr, MExpr>) -> Self {
+/// Alias for a script's current command.
+pub type CurrCmd<'s> = CurrentCmd<'s, Expr, MExpr>;
+impl<'s, E, ME> From<&'s Command<E, ME>> for CurrentCmd<'s, E, ME> {
+    fn from(c: &'s Command<E, ME>) -> Self {
         Self::C(c)
     }
 }
-impl<'s> From<&'s Query<Expr, MExpr>> for CurrentCmd<'s> {
-    fn from(c: &'s Query<Expr, MExpr>) -> Self {
+impl<'s, E, ME> From<&'s Block<E, ME>> for CurrentCmd<'s, E, ME> {
+    fn from(b: &'s Block<E, ME>) -> Self {
+        Self::B(b)
+    }
+}
+impl<'s, E, ME> From<&'s Query<E, ME>> for CurrentCmd<'s, E, ME> {
+    fn from(c: &'s Query<E, ME>) -> Self {
         Self::Q(c)
     }
 }
-impl<'s> From<&'s CheckSat> for CurrentCmd<'s> {
+impl<'s, E, ME> From<&'s CheckSat> for CurrentCmd<'s, E, ME> {
     fn from(c: &'s CheckSat) -> Self {
         Self::Cs(c)
     }
@@ -179,18 +278,18 @@ pub struct Script<'s> {
     meta_env: Map<String, CheckSatRes>,
     /// Current result, indicates we're going up.
     res: Option<QueryRes>,
-    /// Stores the final outcome.
-    outcome: Option<Outcome>,
     /// Result of the current step.
     step_res: Step,
+    /// Outcome, this is not `None` iff we're done.
+    outcome: Option<Outcome>,
     /// Current command.
-    curr: CurrentCmd<'s>,
+    curr: CurrCmd<'s>,
 }
 impl<'s> Script<'s> {
     /// Constructor.
     pub fn new(
         z3_cmd: impl AsRef<str>,
-        tee: Option<impl AsRef<str>>,
+        tee: Option<&str>,
         script: &'s Command<Expr, MExpr>,
         txt: &'s str,
     ) -> Res<Self> {
@@ -204,10 +303,32 @@ impl<'s> Script<'s> {
             stack,
             meta_env: Map::new(),
             res: None,
-            outcome: None,
             step_res: Step::Nothing,
             curr,
+            outcome: None,
         })
+    }
+
+    /// Sets the internal `res` to `Some(QueryRes::None)`, indicating we must go up.
+    pub fn go_up_none(&mut self) -> Res<()> {
+        self.go_up_with(QueryRes::None)
+    }
+    /// Sets the internal `res` to `Some(QueryRes::None)`, indicating we must go up.
+    pub fn go_up_with(&mut self, res: QueryRes) -> Res<()> {
+        let _prev = mem::replace(&mut self.res, Some(res));
+        if let Some(res) = _prev {
+            bail!("[fatal] overwriting *go_up* result {:?}", res)
+        }
+        Ok(())
+    }
+
+    /// Sets the internal step result.
+    pub fn set_step_res(&mut self, step: impl Into<Step>) -> Res<()> {
+        let _prev = mem::replace(&mut self.step_res, step.into());
+        if !_prev.is_nothing() {
+            bail!("[fatal] overwriting *step_res* result {:?}", _prev)
+        }
+        Ok(())
     }
 
     /// Set-options.
@@ -218,12 +339,13 @@ impl<'s> Script<'s> {
     }
     fn inner_set_options(&mut self, opts: &SetOptions) -> Res<()> {
         for opt in opts.content.iter() {
+            let key = format!(":{}", opt.key.inner);
             match opt.val.inner.as_ref() {
-                Either::Left(cst) => self.solver.set_option(&opt.key, cst)?,
-                Either::Right(s) => self.solver.set_option(&opt.key, format!("\"{}\"", s))?,
+                Either::Left(cst) => self.solver.set_option(&key, cst)?,
+                Either::Right(s) => self.solver.set_option(&key, format!("\"{}\"", s))?,
             }
         }
-        Ok(())
+        self.go_up_none()
     }
 
     /// Constant declarations.
@@ -238,7 +360,7 @@ impl<'s> Script<'s> {
         for var in vars.decls.all() {
             self.solver.declare_const(var.id(), var.typ())?;
         }
-        Ok(())
+        self.go_up_none()
     }
 
     /// Check-sat.
@@ -289,33 +411,37 @@ impl<'s> Script<'s> {
                 Some(res) => doit!(res.res),
             },
         };
+        self.curr = frame.current()?;
         self.stack.push(frame.into());
         Ok(())
     }
 
     /// Block.
     pub fn block(&mut self, block: &'s Block<Expr, MExpr>) -> Res<()> {
-        self.stack.push(frame::Block::new(block).into());
+        let mut frame = frame::Block::new(block);
+        if let Some(next) = frame.next() {
+            self.curr = next.into();
+            self.stack.push(frame.into());
+        } else {
+            self.res = Some(QueryRes::None);
+        }
         Ok(())
     }
 
     /// Panic.
     pub fn panic(&mut self, panic: &'s Panic) -> Res<()> {
-        debug_assert_eq!(self.outcome, None);
-        self.outcome = Some(Outcome::Panic(panic.span, panic.msg.clone()));
-        Ok(())
+        self.set_step_res(Outcome::Panic(panic.span, panic.msg.clone()))
     }
 
     /// Echo.
     pub fn echo(&mut self, echo: &'s Echo) -> Res<()> {
-        debug_assert_eq!(self.step_res, Step::Nothing);
-        self.step_res = Step::Echo(echo.clone());
-        Ok(())
+        self.set_step_res(Step::Echo(echo.clone()))?;
+        self.go_up_none()
     }
 
     /// Assertion.
     pub fn assert(&mut self, a: &'s Assert<Expr>) -> Res<()> {
-        match self.solver.assert_with(&a.expr, 0) {
+        match self.solver.assert_with(&a.expr, ()) {
             Ok(()) => (),
             Err(e) => {
                 return Err(PError::new("while handling this assert!", a.span)
@@ -323,30 +449,100 @@ impl<'s> Script<'s> {
                     .chain_err(|| e));
             }
         }
+        self.go_up_none()
+    }
+
+    /// Meta-variable.
+    pub fn mlet(&mut self, ml: &'s MLet) -> Res<()> {
+        let frame = frame::Command::MLet(frame::MLet::new(ml));
+        self.curr = frame.current()?;
+        self.stack.push(frame);
         Ok(())
     }
 
     /// Performs an interpretation step.
     pub fn step(&mut self) -> Res<Step> {
-        debug_assert_eq!(self.step_res, Step::Nothing);
+        if DEBUG {
+            println!();
+        }
+        debug_assert!(self.step_res.is_nothing());
         if let Some(res) = self.outcome.as_ref() {
+            if DEBUG {
+                println!("> got a res");
+            }
             return Ok(Step::Done(res.clone()));
         }
 
-        // do stuff
-
-        if let Some(res) = self.outcome.as_ref() {
-            Ok(Step::Done(res.clone()))
+        // Are we going up?
+        if let Some(qres) = mem::replace(&mut self.res, None) {
+            if DEBUG {
+                println!("> going up {:?}", qres);
+                if let Some(frame) = self.stack.last() {
+                    for line in format!("{:#?}", frame).lines() {
+                        println!("  {}", line);
+                    }
+                }
+            }
+            self.go_up(qres)?
         } else {
-            Ok(mem::replace(&mut self.step_res, Step::Nothing))
+            if DEBUG {
+                println!("> going down {:?}", self.curr);
+            }
+            self.go_down()?
         }
+
+        let step = mem::replace(&mut self.step_res, Step::Nothing);
+        match &step {
+            Step::Done(res) => {
+                self.outcome = Some(res.clone());
+            }
+            _ => (),
+        }
+        Ok(step)
+    }
+
+    /// Goes down the current command.
+    pub fn go_down(&mut self) -> Res<()> {
+        match self.curr {
+            CurrentCmd::C(cmd) => self.go_down_cmd(cmd),
+            CurrentCmd::B(b) => self.block(b),
+            CurrentCmd::Q(q) => self.go_down_query(q),
+            CurrentCmd::Cs(check) => self.go_down_check_sat(check),
+        }
+    }
+    /// Goes down a command.
+    pub fn go_down_cmd(&mut self, cmd: &'s Command<Expr, MExpr>) -> Res<()> {
+        match cmd {
+            Command::SetOptions(opts) => self.set_options(opts),
+            Command::Echo(e) => self.echo(e),
+            Command::Vars(vars) => self.decl_vars(vars),
+            Command::MLet(mlet) => self.mlet(mlet),
+            Command::Assert(a) => self.assert(a),
+            Command::Query(q) => self.go_down_query(q),
+        }
+    }
+    /// Goes down a query.
+    pub fn go_down_query(&mut self, query: &'s Query<Expr, MExpr>) -> Res<()> {
+        match query {
+            Query::Block(block) => self.block(block),
+            Query::CheckSat(c) => self.go_down_check_sat(c),
+            Query::Ite(ite) => self.ite(ite, None),
+            Query::Panic(panic) => self.panic(panic),
+        }
+    }
+    /// Goes down a check sat.
+    pub fn go_down_check_sat(&mut self, check_sat: &'s CheckSat) -> Res<()> {
+        let res = self.check_sat(check_sat)?;
+        self.go_up_with(res)
     }
 
     /// Goes up the stack, given a result.
     pub fn go_up(&mut self, qres: QueryRes) -> Res<()> {
+        debug_assert!(self.step_res.is_nothing());
         use frame::{Command as C, Query as Q};
         match self.stack.pop() {
             None => {
+                self.step_res.update(qres)?;
                 self.outcome = Some(Outcome::Success);
             }
             Some(C::MLet(mlet)) => {
@@ -363,10 +559,13 @@ impl<'s> Script<'s> {
                         ))
                     }
                 }
+                self.go_up_none()?
             }
             Some(C::Query(Q::Block(mut b))) => {
                 if let Some(cmd) = b.next() {
                     self.curr = cmd.into();
+                    self.stack.push(b.into());
+                    self.step_res.update(qres)?;
                 } else {
                     self.res = Some(qres);
                 }

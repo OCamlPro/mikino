@@ -817,6 +817,12 @@ impl Sym2Smt<Unroll> for Var {
         Ok(())
     }
 }
+impl Sym2Smt<()> for Var {
+    fn sym_to_smt2<W: Write>(&self, w: &mut W, _step: ()) -> SmtRes<()> {
+        write!(w, "{}", self.id)?;
+        Ok(())
+    }
+}
 
 /// A stateful variable.
 ///

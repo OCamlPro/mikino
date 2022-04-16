@@ -148,6 +148,8 @@ impl<E> Assert<E> {
 /// Echoes something.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Echo {
+    /// Span.
+    pub span: Span,
     /// Message.
     pub msg: String,
 }
@@ -165,8 +167,11 @@ impl CommandExt for Echo {
 
 impl Echo {
     /// Constructor.
-    pub fn new(msg: impl Into<String>) -> Self {
-        Self { msg: msg.into() }
+    pub fn new(span: impl Into<Span>, msg: impl Into<String>) -> Self {
+        Self {
+            span: span.into(),
+            msg: msg.into(),
+        }
     }
 }
 

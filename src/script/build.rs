@@ -63,7 +63,7 @@ pub enum Frame<'input> {
 const DEBUG: bool = false;
 
 /// Turns a script AST into an actual script.
-pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
+pub fn doit(block: Block<Ast, Ast>) -> PRes<Command<Expr, MExpr>> {
     let mut stack: Vec<Frame> = Vec::with_capacity(11);
     let mut curr: Command<Ast, Ast> = block.into();
     let mut decls = Decls::new();
@@ -350,7 +350,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Block<Expr, MExpr>> {
                 },
                 None => match res {
                     Command::Query(Query::Block(b)) => {
-                        return Ok(b);
+                        return Ok(b.into());
                     }
                     _ => panic!(
                         "[fatal] script parsing cannot produce non-block command but yielded {:#?}",

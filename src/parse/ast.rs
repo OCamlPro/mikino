@@ -115,6 +115,54 @@ impl Span {
             text.len()
         );
     }
+
+    /// Pretty multi-line string representation.
+    pub fn pretty_ml_of(
+        self,
+        text: impl AsRef<str>,
+        style: impl Style,
+        msg: impl AsRef<str>,
+    ) -> String {
+        let text = text.as_ref();
+        let msg = msg.as_ref();
+        let (prev, row, col, line, next) = self.pretty_of(text);
+        let (row_str, col_str) = ((row + 1).to_string(), (col + 1).to_string());
+        let offset = {
+            let mut offset = 0;
+            let mut cnt = 0;
+            for c in line.chars() {
+                if cnt < col {
+                    offset += 1;
+                    cnt += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            offset
+        };
+        let mut s = format!(
+            "at {}:{}\n{} |{}\n{} | {}",
+            style.bold(&row_str),
+            style.bold(&col_str),
+            " ".repeat(row_str.len()),
+            prev.as_ref()
+                .map(|s| format!(" {}", s))
+                .unwrap_or("".into()),
+            style.bold(&row_str),
+            line,
+        );
+        s.push_str(&format!(
+            "\n{} | {}{} {}",
+            " ".repeat(row_str.len()),
+            " ".repeat(offset),
+            style.red("^~~~"),
+            style.red(if msg.is_empty() { "here" } else { msg }),
+        ));
+        if let Some(next) = next {
+            s.push_str(&format!("\n{} | {}", " ".repeat(row_str.len()), next))
+        }
+        s
+    }
 }
 impl From<(usize, usize)> for Span {
     fn from((start, end): (usize, usize)) -> Self {

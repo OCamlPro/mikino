@@ -65,7 +65,8 @@ peg::parser! {
             // Rust-style.
             "//"
             // Do not match inner/outer documentation.
-            [^ '/' | '!' | '\n' ]*
+            [^ '/' | '!' | '\n' ]?
+            [^ '\n' ]*
             // Newline or EOI.
             ("\n" / ![_])
         }
@@ -831,12 +832,12 @@ peg::parser! {
         /// An echo.
         pub rule echo() -> PRes<ast::hsmt::Echo>
         =
-            "echo!" _ "{" _ msg:dbl_quoted() _ "}" {
-                Ok(ast::hsmt::Echo::new(msg))
+            start:position!() "echo!" end:position!() _ "{" _ msg:dbl_quoted() _ "}" {
+                Ok(ast::hsmt::Echo::new((start, end), msg))
             }
             /
-            "echo!" _ "(" _ msg:dbl_quoted() _ ")" {
-                Ok(ast::hsmt::Echo::new(msg))
+            start:position!() "echo!" end:position!() _ "(" _ msg:dbl_quoted() _ ")" {
+                Ok(ast::hsmt::Echo::new((start, end), msg))
             }
 
         /// Parses a hsmt script.

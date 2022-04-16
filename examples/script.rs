@@ -1,9 +1,11 @@
-fn run() {
+mikino_api::prelude!();
+
+fn run() -> Res<()> {
     let input = "
-set_options!(
-    conservative-decls: true,
-    produce-models: true,
-)
+// set_options!(
+//     conservative-decls: true,
+//     produce-models: true,
+// )
 
 vars!(
     cnt0   cnt1   : int,
@@ -56,56 +58,57 @@ if check_sat!() {
 
     println!("parsing and building hsmt script...");
 
-    let s = match mikino_api::parse::script(input) {
-        Ok(s) => {
-            println!();
-            println!("got a script:");
-            println!("{:#?}", s);
-            s
-        }
-        Err(e) => {
-            for e in e.into_iter() {
-                for (idx, line) in e.pretty(()).lines().enumerate() {
-                    let pref = if idx == 0 { "- " } else { "  " };
-                    println!("{}{}", pref, line);
-                }
-            }
-            std::process::exit(2);
-        }
-    };
+    let script = mikino_api::parse::script(input)?;
+    println!();
+    println!("got a script:");
+    println!("{:#?}", script);
 
     println!();
     println!();
 
-    let _s = match mikino_api::script::build::doit(s) {
-        Ok(s) => {
-            println!();
-            println!("built a script:");
-            println!("{:#?}", s);
-            s
-        }
-        Err(e) => {
-            mikino_api::prelude!();
-            let span = e.span;
-            let (prev, row, col, line, next) = span.pretty_of(input);
-            let e = Error::parse("", row, col, line, prev, next).extend(e.error.into_iter());
-            for e in e.into_iter() {
-                for (idx, line) in e.pretty(()).lines().enumerate() {
-                    let pref = if idx == 0 { "- " } else { "  " };
-                    println!("{}{}", pref, line);
+    let script = mikino_api::script::build::doit(script).map_err(|e| {
+        mikino_api::prelude!();
+        let span = e.span;
+        let (prev, row, col, line, next) = span.pretty_of(input);
+        Error::parse("", row, col, line, prev, next).extend(e.error.into_iter())
+    })?;
+    println!();
+    println!("built a script:");
+    println!("{:#?}", script);
+
+    let mut script = mikino_api::script::Script::new("z3", None, &script, input)?;
+
+    'step: loop {
+        use mikino_api::script::Step;
+        match script.step()? {
+            Step::Done(res) => {
+                println!("{}", res.pretty(input, ()));
+                break 'step;
+            }
+            step => {
+                if let Some(pretty) = step.pretty(input, ()) {
+                    println!("{}", pretty)
                 }
             }
-            std::process::exit(2);
         }
-    };
+    }
 
-    // let script = mikino_api::script::Script::new(script);
-
-    println!("success");
+    Ok(())
 }
 
 fn main() {
-    run()
+    match run() {
+        Ok(()) => (),
+        Err(e) => {
+            for e in e.into_iter() {
+                for (idx, line) in e.pretty(()).lines().enumerate() {
+                    let pref = if idx == 0 { "- " } else { "  " };
+                    println!("{}{}", pref, line);
+                }
+            }
+            std::process::exit(2);
+        }
+    }
 }
 
 #[test]
