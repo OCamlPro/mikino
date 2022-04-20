@@ -1,12 +1,11 @@
 //! HSmt 2 scripts.
 
-prelude!();
+prelude!(
+    ast::script::*,
+    expr::{Expr, MExpr},
+);
 
-use crate::parse::PError;
-
-use expr::{Expr, MExpr};
 use frame::Frame;
-use parse::ast::hsmt::*;
 
 pub mod build;
 pub mod frame;

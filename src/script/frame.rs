@@ -3,7 +3,6 @@
 crate::prelude!();
 
 use super::{CurrentCmd, QueryRes};
-use parse::ast::hsmt;
 
 /// An action that happens when going up the frame stack.
 pub enum UpRes<'script> {
@@ -30,7 +29,7 @@ pub trait Frame<'s, E, ME> {
 #[derive(Debug, Clone)]
 pub struct Block<'script, E, ME> {
     /// Original block.
-    pub block: &'script hsmt::Block<E, ME>,
+    pub block: &'script ast::script::Block<E, ME>,
     /// Index of the current command in the block.
     pub current: usize,
 }
@@ -43,13 +42,13 @@ impl<'script, E, ME> Frame<'script, E, ME> for Block<'script, E, ME> {
 
 impl<'script, E, ME> Block<'script, E, ME> {
     /// Constructor.
-    pub fn new(block: &'script hsmt::Block<E, ME>) -> Self {
+    pub fn new(block: &'script ast::script::Block<E, ME>) -> Self {
         Self { block, current: 0 }
     }
 }
 
 impl<'script, E, ME> Iterator for Block<'script, E, ME> {
-    type Item = &'script hsmt::Command<E, ME>;
+    type Item = &'script ast::script::Command<E, ME>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.current < self.block.content.len() {
             let res = Some(&self.block.content[self.current]);
@@ -68,12 +67,12 @@ impl<'script, E, ME> Iterator for Block<'script, E, ME> {
 #[derive(Debug, Clone)]
 pub struct MLet<'script> {
     /// Original [`MLet`].
-    pub mlet: &'script hsmt::MLet,
+    pub mlet: &'script ast::script::MLet,
 }
 
 impl<'script> MLet<'script> {
     /// Constructor.
-    pub fn new(mlet: &'script hsmt::MLet) -> Self {
+    pub fn new(mlet: &'script ast::script::MLet) -> Self {
         Self { mlet }
     }
 }
@@ -95,7 +94,7 @@ pub enum ItePos {
 #[derive(Debug, Clone)]
 pub struct Ite<'script, E, ME> {
     /// Original [`Ite`].
-    pub ite: &'script hsmt::Ite<E, ME>,
+    pub ite: &'script ast::script::Ite<E, ME>,
     /// Current position in the [`Ite`].
     pub pos: ItePos,
 }
@@ -134,7 +133,7 @@ impl<'script, E, ME> Ite<'script, E, ME> {
     /// Constructor.
     ///
     /// Fails if the condition of the [`Ite`] is not a check sat.
-    pub fn new(ite: &'script hsmt::Ite<E, ME>, pos: ItePos) -> Res<Self> {
+    pub fn new(ite: &'script ast::script::Ite<E, ME>, pos: ItePos) -> Res<Self> {
         match pos {
             ItePos::Cnd => {
                 if ite.cnd.is_left() {
@@ -146,19 +145,19 @@ impl<'script, E, ME> Ite<'script, E, ME> {
         Ok(Self { ite, pos })
     }
     /// Constructor for an exploration of the condition.
-    pub fn new_cnd(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+    pub fn new_cnd(ite: &'script ast::script::Ite<E, ME>) -> Res<Self> {
         Self::new(ite, ItePos::Cnd)
     }
     /// Constructor for an exploration of the then branch.
-    pub fn new_thn(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+    pub fn new_thn(ite: &'script ast::script::Ite<E, ME>) -> Res<Self> {
         Self::new(ite, ItePos::Thn)
     }
     /// Constructor for an exploration of the else branch.
-    pub fn new_els(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+    pub fn new_els(ite: &'script ast::script::Ite<E, ME>) -> Res<Self> {
         Self::new(ite, ItePos::Els)
     }
     /// Constructor for an exploration of the otherwise branch.
-    pub fn new_otw(ite: &'script hsmt::Ite<E, ME>) -> Res<Self> {
+    pub fn new_otw(ite: &'script ast::script::Ite<E, ME>) -> Res<Self> {
         Self::new(ite, ItePos::Otw)
     }
 }

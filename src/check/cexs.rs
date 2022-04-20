@@ -3,7 +3,6 @@
 crate::prelude!();
 
 use expr::{Cst, Typ, Var};
-use parse::Parser;
 
 /// A counterexample.
 #[derive(Debug, Clone)]
@@ -233,7 +232,7 @@ impl<'a, Br: std::io::BufRead>
         _: &Typ,
     ) -> SmtRes<Either<Cst, String>> {
         let sexpr = input.get_sexpr()?;
-        let mut parser = Parser::new(sexpr);
+        let mut parser = parse::Parser::new(sexpr);
         if let Ok(Some(cst)) = parser.try_cst() {
             Ok(Either::Left(cst))
         } else {

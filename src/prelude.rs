@@ -1,5 +1,6 @@
 //! Common imports throughout this project.
 
+#[allow(unused_imports)]
 pub(crate) use std::{
     collections::{BTreeMap as Map, BTreeSet as Set},
     fmt,
@@ -16,10 +17,11 @@ pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
 pub use rsmt2::{parse::SmtParser as RSmtParser, SmtConf, SmtRes, Solver as SmtSolver};
 
 pub use crate::{
-    build_decls, build_expr, build_trans, build_typ, check,
+    ast, build_decls, build_expr, build_trans, build_typ, check,
     err::*,
     expr::{self, HasTyp, Typ},
-    parse, script,
+    parse::{self, Span, Spn},
+    script,
     solver::{SFSolver, SLSolver},
     trans,
 };

@@ -67,7 +67,10 @@ get_model!()
         Error::parse("", row, col, line, prev, next).extend(e.error.into_iter())
     })?;
 
-    let mut script = mikino_api::script::Script::new("z3", Some("log.smt2"), &script, input)?;
+    let mut script = {
+        let conf = mikino_api::rsmt2::SmtConf::default_z3();
+        mikino_api::script::Script::new(conf, None, &script, input)?
+    };
 
     'step: loop {
         use mikino_api::script::Step;
@@ -104,5 +107,5 @@ fn main() {
 
 #[test]
 fn test_sys() {
-    run()
+    main()
 }

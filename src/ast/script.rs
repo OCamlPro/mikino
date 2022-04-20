@@ -4,8 +4,6 @@
 
 crate::prelude!();
 
-use parse::ast::*;
-
 /// Command trait.
 pub trait CommandExt {
     /// True if the command is a query, *i.e.* produces a result.
@@ -22,7 +20,7 @@ pub struct SetOption {
     /// Attribute key.
     pub key: Spn<String>,
     /// Attribute value.
-    pub val: Spn<Either<Cst, String>>,
+    pub val: Spn<Either<expr::Cst, String>>,
 }
 impl fmt::Display for SetOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -35,7 +33,7 @@ impl fmt::Display for SetOption {
 }
 impl SetOption {
     /// Constructor.
-    pub fn new(key: impl Into<Spn<String>>, val: Spn<Either<Cst, String>>) -> Self {
+    pub fn new(key: impl Into<Spn<String>>, val: Spn<Either<expr::Cst, String>>) -> Self {
         Self {
             key: key.into(),
             val: val.into(),

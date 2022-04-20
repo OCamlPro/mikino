@@ -1,9 +1,9 @@
 //! Builds a script from a script AST.
 
 prelude!(
-    parse::ast::{hsmt::*, Ast, PRes, PError, Spn, Span},
     expr::{Expr, MExpr, MetaVar},
     trans::Decls,
+    ast::script::*,
 );
 
 /// Meta-declarations: scoped, unlike normal declarations.
@@ -17,16 +17,16 @@ pub enum Frame<'input> {
     Block(
         MDecls,
         Vec<Command<Expr, MExpr>>,
-        std::vec::IntoIter<Command<Ast<'input>, Ast<'input>>>,
+        std::vec::IntoIter<Command<ast::Expr<'input>, ast::Expr<'input>>>,
     ),
     /// Ite info, when in the condition.
     IteCnd(
         MDecls,
         Decls,
         Span,
-        Block<Ast<'input>, Ast<'input>>,
-        Block<Ast<'input>, Ast<'input>>,
-        Option<Block<Ast<'input>, Ast<'input>>>,
+        Block<ast::Expr<'input>, ast::Expr<'input>>,
+        Block<ast::Expr<'input>, ast::Expr<'input>>,
+        Option<Block<ast::Expr<'input>, ast::Expr<'input>>>,
     ),
     /// Ite info, when in the then branch.
     IteThn(
@@ -34,8 +34,8 @@ pub enum Frame<'input> {
         Decls,
         Span,
         Either<Spn<MetaVar>, CheckSat>,
-        Block<Ast<'input>, Ast<'input>>,
-        Option<Block<Ast<'input>, Ast<'input>>>,
+        Block<ast::Expr<'input>, ast::Expr<'input>>,
+        Option<Block<ast::Expr<'input>, ast::Expr<'input>>>,
     ),
     /// Ite info, when in the else branch.
     IteEls(
@@ -44,7 +44,7 @@ pub enum Frame<'input> {
         Span,
         Either<Spn<MetaVar>, CheckSat>,
         (Block<Expr, MExpr>, Decls),
-        Option<Block<Ast<'input>, Ast<'input>>>,
+        Option<Block<ast::Expr<'input>, ast::Expr<'input>>>,
     ),
     /// Ite info, when in the otherwise branch.
     IteOtw(
@@ -63,9 +63,9 @@ pub enum Frame<'input> {
 const DEBUG: bool = false;
 
 /// Turns a script AST into an actual script.
-pub fn doit(block: Block<Ast, Ast>) -> PRes<Command<Expr, MExpr>> {
+pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
     let mut stack: Vec<Frame> = Vec::with_capacity(11);
-    let mut curr: Command<Ast, Ast> = block.into();
+    let mut curr: Command<ast::Expr, ast::Expr> = block.into();
     let mut decls = Decls::new();
     let mut meta_decls = MDecls::new();
 

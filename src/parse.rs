@@ -6,16 +6,177 @@ use expr::{Cst, Expr, Op, PExpr, SExpr, SVar, Typ, Var};
 use rsmt2::parse::IdentParser;
 use trans::Decls;
 
-#[cfg(feature = "parser")]
-use trans::Sys;
-
-pub mod ast;
 pub mod kw;
 
-#[cfg(all(test, feature = "parser"))]
+#[cfg(test)]
 mod test;
 
-pub use ast::*;
+/// A span in the input text.
+#[readonly::make]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    /// Span's start (inclusive).
+    pub start: usize,
+    /// Span's end (exclusive).
+    pub end: usize,
+}
+impl Span {
+    /// Constructor.
+    pub fn new(start: usize, end: usize) -> Self {
+        debug_assert!(start <= end);
+        Span { start, end }
+    }
+    /// Merges two spans, `self`'s start and `other`'s end.
+    ///
+    /// - illegal if `self.start > other.end`.
+    pub fn merge(self, other: Self) -> Self {
+        (self.start, other.end).into()
+    }
+
+    /// Extracts the relevant line of the input, and the previous/next line if any.
+    pub fn pretty_of(self, text: &str) -> (Option<String>, usize, usize, String, Option<String>) {
+        if text.is_empty() {
+            assert_eq!(self.start, 0);
+            assert_eq!(self.end, 0);
+            return (None, 0, 0, "<EOI>".into(), None);
+        }
+        let mut lines = text.lines().enumerate();
+
+        let mut count = self.start;
+        let mut prev_line = None;
+
+        while let Some((row, line)) = lines.next() {
+            if line.len() >= count {
+                let (line, next) = {
+                    let next = lines.next().map(|(_, s)| s.to_string());
+                    if next.is_none() {
+                        (format!("{}{}", line, "<EOI>"), next)
+                    } else {
+                        (line.into(), next)
+                    }
+                };
+                return (prev_line.map(String::from), row, count, line, next);
+            }
+
+            count -= line.len() + 1;
+            prev_line = Some(line);
+        }
+
+        panic!(
+            "illegal offset {} on text of length {}",
+            self.start,
+            text.len()
+        );
+    }
+
+    /// Pretty multi-line string representation.
+    pub fn pretty_ml_of(
+        self,
+        text: impl AsRef<str>,
+        style: impl Style,
+        msg: impl AsRef<str>,
+    ) -> String {
+        let text = text.as_ref();
+        let msg = msg.as_ref();
+        let (prev, row, col, line, next) = self.pretty_of(text);
+        let (row_str, col_str) = ((row + 1).to_string(), (col + 1).to_string());
+        let offset = {
+            let mut offset = 0;
+            let mut cnt = 0;
+            for c in line.chars() {
+                if cnt < col {
+                    offset += 1;
+                    cnt += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            offset
+        };
+        let mut s = format!(
+            "at {}:{}\n{} |{}\n{} | {}",
+            style.bold(&row_str),
+            style.bold(&col_str),
+            " ".repeat(row_str.len()),
+            prev.as_ref()
+                .map(|s| format!(" {}", s))
+                .unwrap_or("".into()),
+            style.bold(&row_str),
+            line,
+        );
+        s.push_str(&format!(
+            "\n{} | {}{} {}",
+            " ".repeat(row_str.len()),
+            " ".repeat(offset),
+            style.red("^~~~"),
+            style.red(if msg.is_empty() { "here" } else { msg }),
+        ));
+        if let Some(next) = next {
+            s.push_str(&format!("\n{} | {}", " ".repeat(row_str.len()), next))
+        }
+        s
+    }
+}
+impl From<(usize, usize)> for Span {
+    fn from((start, end): (usize, usize)) -> Self {
+        Self::new(start, end)
+    }
+}
+
+/// Wraps something with a span.
+#[derive(Debug, Clone, Copy)]
+pub struct Spn<T> {
+    /// Value wrapped.
+    pub inner: T,
+    /// Span.
+    pub span: Span,
+}
+impl<T: PartialEq> PartialEq for Spn<T> {
+    fn eq(&self, that: &Self) -> bool {
+        self.inner == that.inner
+    }
+}
+impl<T: Eq> Eq for Spn<T> {}
+impl<T> Spn<T> {
+    /// Constructor.
+    pub fn new(inner: T, span: impl Into<Span>) -> Self {
+        let span = span.into();
+        Self { inner, span }
+    }
+
+    /// Applies an operation to the inner value.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spn<U> {
+        Spn {
+            inner: f(self.inner),
+            span: self.span,
+        }
+    }
+
+    /// Applies an operation yielding a result to the inner value.
+    pub fn res_map<U>(
+        self,
+        mut f: impl FnMut(T) -> Result<U, &'static str>,
+    ) -> Result<Spn<U>, &'static str> {
+        let inner = f(self.inner)?;
+        Ok(Spn::new(inner, self.span))
+    }
+
+    /// Unwraps `self`'s and `other`'s inner values and merges their spans.
+    pub fn unwrap_merge<U>(self, other: Spn<U>) -> (T, U, Span) {
+        (self.inner, other.inner, self.span.merge(other.span))
+    }
+}
+impl<T> Deref for Spn<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+impl From<Spn<&str>> for Spn<String> {
+    fn from(spn: Spn<&str>) -> Self {
+        spn.map(|s| s.into())
+    }
+}
 
 /// Yields `true` if `ident` is a keyword.
 pub fn is_kw(ident: impl AsRef<str>) -> bool {
@@ -31,7 +192,6 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
     }
 }
 
-#[cfg(feature = "parser")]
 peg::parser! {
     /// PEG parsing rules, requires the `parser` feature.
     ///
@@ -65,7 +225,7 @@ peg::parser! {
             // Rust-style.
             "//"
             // Do not match inner/outer documentation.
-            [^ '/' | '!' | '\n' ]?
+            &[^ '/' | '!' ]
             [^ '\n' ]*
             // Newline or EOI.
             ("\n" / ![_])
@@ -329,14 +489,14 @@ peg::parser! {
         / expected!("int/rat/bool constant")
 
         /// Parses variables.
-        pub rule hsmt_var() -> Ast<'input>
+        pub rule hsmt_var() -> ast::Expr<'input>
         = quiet! {
             prime:(
                 ps:position!() "'" pe:position!() {
                     Span::from((ps, pe))
                 }
             )? var:ident() {
-                Ast::svar(var, prime)
+                ast::Expr::svar(var, prime)
             }
         }
         / expected!("(un)primed state variable")
@@ -344,7 +504,7 @@ peg::parser! {
         /// Parses an if-then-else.
         ///
         /// No parens needed, for documentation see [`hsmt_expr`].
-        pub rule hsmt_ite() -> Ast<'input>
+        pub rule hsmt_ite() -> ast::Expr<'input>
         = quiet! {
             s:position!() "if" e:position!()
             _ cnd:hsmt_expr()
@@ -362,9 +522,9 @@ peg::parser! {
                 let ite = Op::Ite;
                 let els = elseif.into_iter().rev().fold(
                     els,
-                    |els, (if_span, cnd, thn)| Ast::app(Spn::new(ite, if_span), vec![cnd, thn, els]),
+                    |els, (if_span, cnd, thn)| ast::Expr::app(Spn::new(ite, if_span), vec![cnd, thn, els]),
                 );
-                Ast::app(Spn::new(Op::Ite, (s,e)), vec![cnd, thn, els])
+                ast::Expr::app(Spn::new(Op::Ite, (s,e)), vec![cnd, thn, els])
             }
         }
         / expected!("if-then-else")
@@ -374,7 +534,7 @@ peg::parser! {
         /// # Examples
         ///
         /// ```rust
-        /// # use mikino_api::parse::rules::hsmt;
+        /// # use mikino_api::parse::rules::hsmt_expr;
         /// let ast = hsmt_expr(
         ///     "if a ⋀ n ≥ 10 { 'n = n - 1 } \
         ///     else if false { 'n > n } \
@@ -393,7 +553,7 @@ peg::parser! {
         /// ```
         ///
         /// ```rust
-        /// use mikino_api::parse::rules::hsmt;
+        /// use mikino_api::parse::rules::hsmt_expr;
         /// let ast = hsmt_expr(
         ///     "a ⋀ x ≥ 7 - m ⋁ if 7 = n + m { b_1 ⋁ b_2 } else { c }"
         /// ).unwrap();
@@ -405,65 +565,65 @@ peg::parser! {
         ///     ",
         /// )
         /// ```
-        pub rule hsmt_expr() -> Ast<'input>
+        pub rule hsmt_expr() -> ast::Expr<'input>
         = ast:precedence! {
             // Implication, right associative.
             lft:@ _ s:position!() (
                 "=>" / "⇒" / "→" / "⊃"
              ) e:position!() _ rgt:(@) {
-                Ast::binapp(Spn::new(Op::Implies, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Implies, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() (
                 "∨" / "⋁" / "||" / "and"
              ) e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() (
                 "∧" / "⋀" / "&&" / "or"
             ) e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() "<" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Lt, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Lt, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() ("<=" / "≤") e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Le, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Le, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() (">=" / "≥") e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Ge, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Ge, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() ">" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Gt, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Gt, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() "=" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Eq, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Eq, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() "+" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Add, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Add, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() "-" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Sub, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Sub, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() "%" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Mod, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Mod, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() "*" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Mul, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Mul, (s, e)), lft, rgt)
             }
             lft:(@) _ s:position!() "/" e:position!() _ rgt:@ {
-                Ast::binapp(Spn::new(Op::Div, (s, e)), lft, rgt)
+                ast::Expr::binapp(Spn::new(Op::Div, (s, e)), lft, rgt)
             }
             --
             s:position!() ("¬" / "!" / "not") e:position!() _ arg:@ {
-                Ast::unapp(Spn::new(Op::Not, (s, e)), arg)
+                ast::Expr::unapp(Spn::new(Op::Not, (s, e)), arg)
             }
             s:position!() "-" e:position!() _ arg:@ {
-                Ast::unapp(Spn::new(Op::Sub, (s, e)), arg)
+                ast::Expr::unapp(Spn::new(Op::Sub, (s, e)), arg)
             }
             --
             ite:hsmt_ite() {
@@ -473,7 +633,7 @@ peg::parser! {
                 var
             }
             cst:cst() {
-                Ast::cst(cst)
+                ast::Expr::cst(cst)
             }
             "(" _ e:hsmt_expr() _ ")" {
                 let mut e = e;
@@ -588,7 +748,7 @@ peg::parser! {
         /// assert_eq!(*name, "tautology");
         /// assert_eq!(expr.to_string(), "(p ⋁ (¬p))");
         /// ```
-        pub rule candidates() -> Vec<(Spn<&'input str>, Ast<'input>)>
+        pub rule candidates() -> Vec<(Spn<&'input str>, ast::Expr<'input>)>
         = quiet! {
             cands:(
                 _ s:position!() name:dbl_quoted() e:position!() _ ":" _
@@ -629,8 +789,8 @@ peg::parser! {
         _ "candidates" _ "{" _ candidates:candidates() _ "}"
         _ {
             let decls = decls?;
-            let init = Ast::app(Spn::new(Op::And, (init_s, init_e)), hsmt_init).to_expr(&decls)?;
-            let trans = Ast::app(Spn::new(Op::And, (trans_s, trans_e)), hsmt_trans).to_sexpr(&decls)?;
+            let init = ast::Expr::app(Spn::new(Op::And, (init_s, init_e)), hsmt_init).to_expr(&decls)?;
+            let trans = ast::Expr::app(Spn::new(Op::And, (trans_s, trans_e)), hsmt_trans).to_sexpr(&decls)?;
 
             let mut pos = Map::new();
 
@@ -653,7 +813,7 @@ peg::parser! {
 
 
         /// A **non-empty** sequence of commands.
-        pub rule commands() -> PRes<ast::hsmt::Commands<Ast<'input>, Ast<'input>>>
+        pub rule commands() -> PRes<ast::script::Commands<ast::Expr<'input>, ast::Expr<'input>>>
         =
             head:command() tail:(_ cmd:command() { cmd })* {
                 let mut cmds = Vec::with_capacity(tail.len());
@@ -665,7 +825,7 @@ peg::parser! {
             }
 
         /// Command parser.
-        pub rule command() -> PRes<ast::hsmt::Command<Ast<'input>, Ast<'input>>>
+        pub rule command() -> PRes<ast::script::Command<ast::Expr<'input>, ast::Expr<'input>>>
         =
             cmd:set_options() { Ok(cmd?.into()) }
             /
@@ -682,7 +842,7 @@ peg::parser! {
             query:query() { Ok(query?.into()) }
 
         /// Query parser.
-        pub rule query() -> PRes<ast::hsmt::Query<Ast<'input>, Ast<'input>>>
+        pub rule query() -> PRes<ast::script::Query<ast::Expr<'input>, ast::Expr<'input>>>
         =
             q:block() { Ok(q?.into()) }
             /
@@ -698,35 +858,35 @@ peg::parser! {
 
 
         /// Block parser.
-        pub rule block() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>
+        pub rule block() -> PRes<ast::script::Block<ast::Expr<'input>, ast::Expr<'input>>>
         =
             "{" commands:(_ cmd:command() { cmd })* _ "}" {
                 let mut content = Vec::with_capacity(commands.len());
                 for command in commands {
                     content.push(command?)
                 }
-                Ok(ast::hsmt::Block::new(content))
+                Ok(ast::script::Block::new(content))
             }
 
         /// Check sat.
-        pub rule check_sat() -> PRes<ast::hsmt::CheckSat>
+        pub rule check_sat() -> PRes<ast::script::CheckSat>
         =
             start:position!() "check_sat!" end:position!()
             _ "("
                 // (_ key:$(ident()) _ ":" _ ""
             _ ")" {
-                Ok(ast::hsmt::CheckSat::new((start, end), None, None))
+                Ok(ast::script::CheckSat::new((start, end), None, None))
             }
             /
             start:position!() "check_sat!" end:position!()
             _ "{"
                 // (_ key:$(ident()) _ ":" _ ""
             _ "}" {
-                Ok(ast::hsmt::CheckSat::new((start, end), None, None))
+                Ok(ast::script::CheckSat::new((start, end), None, None))
             }
 
         /// Ite.
-        pub rule ite() -> PRes<ast::hsmt::Ite<Ast<'input>, Ast<'input>>>
+        pub rule ite() -> PRes<ast::script::Ite<ast::Expr<'input>, ast::Expr<'input>>>
         =
             start:position!() "if" end:position!()
             _ cnd:(
@@ -748,34 +908,34 @@ peg::parser! {
                 }
             )? {
                 let (els, otw) = tail.unwrap_or_else(
-                    || (Ok(ast::hsmt::Block::new(vec![])), None)
+                    || (Ok(ast::script::Block::new(vec![])), None)
                 );
                 let otw = if let Some(otw) = otw {
                     Some(otw?)
                 } else {
                     None
                 };
-                Ok(ast::hsmt::Ite::new((start, end), cnd?, thn?, els?, otw))
+                Ok(ast::script::Ite::new((start, end), cnd?, thn?, els?, otw))
             }
 
         /// A panic.
-        pub rule panic() -> PRes<ast::hsmt::Panic>
+        pub rule panic() -> PRes<ast::script::Panic>
         =
             start:position!() "panic!" end:position!()
             _ "{" _ msg:dbl_quoted() _ "}" {
-                Ok(ast::hsmt::Panic::new((start, end), msg))
+                Ok(ast::script::Panic::new((start, end), msg))
             }
             /
             start:position!() "panic!" end:position!()
             _ "(" _ msg:dbl_quoted() _ ")" {
-                Ok(ast::hsmt::Panic::new((start, end), msg))
+                Ok(ast::script::Panic::new((start, end), msg))
             }
 
 
 
 
         /// A `set-option` key/value pair.
-        pub rule set_option() -> ast::hsmt::SetOption
+        pub rule set_option() -> ast::script::SetOption
         =
             key:dash_ident() _ ":"
             _ start:position!() val:(
@@ -783,11 +943,11 @@ peg::parser! {
                 /
                 s:dbl_quoted() { Either::Right(s.to_string()) }
             ) end:position!() {
-                ast::hsmt::SetOption::new(key, Spn::new(val, (start, end)))
+                ast::script::SetOption::new(key, Spn::new(val, (start, end)))
             }
 
         /// A sequence of `set-option`s.
-        pub rule set_options() -> PRes<ast::hsmt::SetOptions>
+        pub rule set_options() -> PRes<ast::script::SetOptions>
         =
             start:position!() ("set_options!"/"set_option!") end:position!()
             _ "("
@@ -795,69 +955,69 @@ peg::parser! {
                     _ opt:set_option() _ { opt }
                 )++"," _ ","?
             _ ")" {
-                Ok(ast::hsmt::SetOptions::new((start, end), opts))
+                Ok(ast::script::SetOptions::new((start, end), opts))
             }
 
         /// A `declare-const` let-binding.
-        pub rule const_decls() -> PRes<ast::hsmt::Vars>
+        pub rule const_decls() -> PRes<ast::script::Vars>
         =
             start:position!() "vars" end:position!()
             _ "{" _ decls:svars() _ "}" {
-                Ok(ast::hsmt::Vars::new((start, end), decls?))
+                Ok(ast::script::Vars::new((start, end), decls?))
             }
             /
             start:position!() "vars!" end:position!()
             _ "(" _ decls:svars() _ ")" {
-                Ok(ast::hsmt::Vars::new((start, end), decls?))
+                Ok(ast::script::Vars::new((start, end), decls?))
             }
 
         /// A meta-binding.
-        pub rule mlet() -> PRes<ast::hsmt::MLet>
+        pub rule mlet() -> PRes<ast::script::MLet>
         =
             "let" _ lhs:ident() _ "=" _ query:check_sat() _ ";" {
-                Ok(ast::hsmt::MLet::new(lhs, query?))
+                Ok(ast::script::MLet::new(lhs, query?))
             }
 
         /// An assert.
-        pub rule assert() -> PRes<ast::hsmt::Assert<Ast<'input>>>
+        pub rule assert() -> PRes<ast::script::Assert<ast::Expr<'input>>>
         =
             start:position!() "assert!" end:position!()
             _ "(" _ expr:hsmt_expr() _ ")" {
-                Ok(ast::hsmt::Assert::new((start, end), expr))
+                Ok(ast::script::Assert::new((start, end), expr))
             }
             /
             start:position!() "assert!" end:position!()
             _ "{" _ expr:hsmt_expr() _ "}" {
-                Ok(ast::hsmt::Assert::new((start, end), expr))
+                Ok(ast::script::Assert::new((start, end), expr))
             }
 
         /// An assert.
-        pub rule get_model() -> PRes<ast::hsmt::GetModel>
+        pub rule get_model() -> PRes<ast::script::GetModel>
         =
             start:position!() "get_model!" end:position!() _ "(" _ ")" {
-                Ok(ast::hsmt::GetModel::new((start, end)))
+                Ok(ast::script::GetModel::new((start, end)))
             }
             /
             start:position!() "get_model!" end:position!() _ "{" _ "}" {
-                Ok(ast::hsmt::GetModel::new((start, end)))
+                Ok(ast::script::GetModel::new((start, end)))
             }
 
         /// An echo.
-        pub rule echo() -> PRes<ast::hsmt::Echo>
+        pub rule echo() -> PRes<ast::script::Echo>
         =
             start:position!() "echo!" end:position!() _ "{" _ msg:dbl_quoted() _ "}" {
-                Ok(ast::hsmt::Echo::new((start, end), msg))
+                Ok(ast::script::Echo::new((start, end), msg))
             }
             /
             start:position!() "echo!" end:position!() _ "(" _ msg:dbl_quoted() _ ")" {
-                Ok(ast::hsmt::Echo::new((start, end), msg))
+                Ok(ast::script::Echo::new((start, end), msg))
             }
 
         /// Parses a hsmt script.
-        pub rule hsmt_script() -> PRes<ast::hsmt::Block<Ast<'input>, Ast<'input>>>
+        pub rule hsmt_script() -> PRes<ast::script::Block<ast::Expr<'input>, ast::Expr<'input>>>
         =
             _ content:commands() _ {
-                Ok(ast::hsmt::Block::new(content?))
+                Ok(ast::script::Block::new(content?))
             }
     }
 }
@@ -875,9 +1035,8 @@ peg::parser! {
 /// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
 ///
 /// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
-#[cfg(feature = "parser")]
-pub fn sys(txt: &str) -> Res<Sys> {
-    let res: Res<Sys> = match rules::hsmt_sys(txt) {
+pub fn sys(txt: &str) -> Res<trans::Sys> {
+    let res: Res<trans::Sys> = match rules::hsmt_sys(txt) {
         Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {
             // println!("peg parse error");
@@ -903,8 +1062,7 @@ pub fn sys(txt: &str) -> Res<Sys> {
 /// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
 ///
 /// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
-#[cfg(feature = "parser")]
-pub fn script(txt: &str) -> Res<ast::hsmt::Block<Ast, Ast>> {
+pub fn script(txt: &str) -> Res<ast::script::Block<ast::Expr, ast::Expr>> {
     let res: Res<_> = match rules::hsmt_script(txt) {
         Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {

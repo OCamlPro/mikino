@@ -66,7 +66,6 @@ fn typing_cmp() {
     assert_eq!(typ, expr::Typ::Bool);
 }
 
-#[cfg(feature = "parser")]
 macro_rules! parse_build_check {
     {
         input: $input:expr,
@@ -79,7 +78,7 @@ macro_rules! parse_build_check {
             println!("    {}", line);
         }
         let decls = build_decls!($($decls)*).unwrap();
-        let ast = parse::rules::hsmt(input).unwrap();
+        let ast = parse::rules::hsmt_expr(input).unwrap();
         let res = ast
             .inner_to_expr(|var, prime_opt| {
                 let span = var.span;
@@ -88,7 +87,7 @@ macro_rules! parse_build_check {
                 } else {
                     decls.get_curr_var(*var)
                 }
-                .ok_or_else(|| parse::PError::new(format!("undeclared variable {:?}", var), span))?;
+                .ok_or_else(|| PError::new(format!("undeclared variable {:?}", var), span))?;
                 Ok(parse::Spn::new(expr::PExpr::new_var(var), span))
             });
         parse_build_check!(@then $then, res, $expect)
@@ -107,7 +106,6 @@ macro_rules! parse_build_check {
 }
 
 #[test]
-#[cfg(feature = "parser")]
 fn collapse() {
     parse_build_check! {
         input: "a - b - 'c - d",
@@ -132,7 +130,6 @@ fn collapse() {
 }
 
 #[test]
-#[cfg(feature = "parser")]
 fn precedence() {
     parse_build_check! {
         input: "a + b * 'c",
@@ -159,7 +156,6 @@ fn precedence() {
 }
 
 #[test]
-#[cfg(feature = "parser")]
 fn type_check_fail() {
     parse_build_check! {
         input: "a && b && c",
