@@ -301,6 +301,31 @@ impl CheckSat {
     }
 }
 
+/// A get model, not *currently* considered a query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetModel {
+    /// Keyword span.
+    pub span: Span,
+}
+impl CommandExt for GetModel {
+    fn is_query(&self) -> bool {
+        false
+    }
+    fn desc(&self) -> String {
+        format!("get-model")
+    }
+    fn panics(&self) -> bool {
+        false
+    }
+}
+
+impl GetModel {
+    /// Constructor.
+    pub fn new(span: impl Into<Span>) -> Self {
+        Self { span: span.into() }
+    }
+}
+
 /// An if-then-else on a meta, boolean variable ([`Query`]).
 ///
 /// `Ite` is a [`Query`] because it **can** produce a result. Namely, if all of its branches end
@@ -452,6 +477,8 @@ pub enum Command<E, ME> {
     Assert(Assert<E>),
     /// Echo.
     Echo(Echo),
+    /// Get model.
+    GetModel(GetModel),
     /// Commands that can produce boolean results.
     Query(Query<E, ME>),
 }
@@ -463,6 +490,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::MLet(c) => c.is_query(),
             Self::Assert(c) => c.is_query(),
             Self::Echo(c) => c.is_query(),
+            Self::GetModel(c) => c.is_query(),
             Self::Query(q) => q.is_query(),
         }
     }
@@ -473,6 +501,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::MLet(c) => c.desc(),
             Self::Assert(c) => c.desc(),
             Self::Echo(c) => c.desc(),
+            Self::GetModel(c) => c.desc(),
             Self::Query(q) => q.desc(),
         }
     }
@@ -483,6 +512,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::MLet(c) => c.panics(),
             Self::Assert(c) => c.panics(),
             Self::Echo(c) => c.panics(),
+            Self::GetModel(c) => c.panics(),
             Self::Query(q) => q.panics(),
         }
     }
@@ -511,6 +541,11 @@ impl<E, ME> From<Assert<E>> for Command<E, ME> {
 impl<E, ME> From<Echo> for Command<E, ME> {
     fn from(e: Echo) -> Self {
         Self::Echo(e)
+    }
+}
+impl<E, ME> From<GetModel> for Command<E, ME> {
+    fn from(gm: GetModel) -> Self {
+        Self::GetModel(gm)
     }
 }
 

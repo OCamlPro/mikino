@@ -6,6 +6,7 @@ pub(crate) use std::{
     io::Write,
     marker, mem,
     ops::{self, Deref, DerefMut},
+    path::PathBuf,
     time,
 };
 
@@ -15,11 +16,12 @@ pub use num::{bigint::Sign, BigInt as Int, BigRational as Rat, One, Zero};
 pub use rsmt2::{parse::SmtParser as RSmtParser, SmtConf, SmtRes, Solver as SmtSolver};
 
 pub use crate::{
-    build_decls, build_expr, build_trans, build_typ,
-    check::{self, Solver},
+    build_decls, build_expr, build_trans, build_typ, check,
     err::*,
     expr::{self, HasTyp, Typ},
-    parse, script, trans,
+    parse, script,
+    solver::{SFSolver, SLSolver},
+    trans,
 };
 
 /// Step index.

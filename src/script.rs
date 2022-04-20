@@ -269,7 +269,7 @@ pub struct Script<'s> {
     /// Input text.
     txt: &'s str,
     /// Solver.
-    pub solver: Solver,
+    pub solver: SLSolver,
     /// Original commands, the full script.
     pub script: &'s Command<Expr, MExpr>,
     /// Stack of command frames (derivatives).
@@ -288,12 +288,12 @@ pub struct Script<'s> {
 impl<'s> Script<'s> {
     /// Constructor.
     pub fn new(
-        z3_cmd: impl AsRef<str>,
-        tee: Option<&str>,
+        conf: SmtConf,
+        tee: Option<PathBuf>,
         script: &'s Command<Expr, MExpr>,
         txt: &'s str,
     ) -> Res<Self> {
-        let solver = Solver::new(z3_cmd, tee)?;
+        let solver = SLSolver::new(conf, tee)?;
         let stack = Vec::with_capacity(17);
         let curr = script.into();
         Ok(Self {
@@ -452,6 +452,24 @@ impl<'s> Script<'s> {
         self.go_up_none()
     }
 
+    /// Get model.
+    pub fn get_model(&mut self, gm: &'s GetModel) -> Res<()> {
+        match self.solver.get_model() {
+            Ok(model) => {
+                println!("model:");
+                for (var, _args, _typ, val) in model {
+                    println!("    {}: {}", var, val);
+                }
+            }
+            Err(e) => {
+                return Err(PError::new("while handling this assert!", gm.span)
+                    .into_error(self.txt)
+                    .chain_err(|| e));
+            }
+        }
+        self.go_up_none()
+    }
+
     /// Meta-variable.
     pub fn mlet(&mut self, ml: &'s MLet) -> Res<()> {
         let frame = frame::Command::MLet(frame::MLet::new(ml));
@@ -518,6 +536,7 @@ impl<'s> Script<'s> {
             Command::Vars(vars) => self.decl_vars(vars),
             Command::MLet(mlet) => self.mlet(mlet),
             Command::Assert(a) => self.assert(a),
+            Command::GetModel(gm) => self.get_model(gm),
             Command::Query(q) => self.go_down_query(q),
         }
     }

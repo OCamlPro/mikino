@@ -13,6 +13,7 @@ pub mod check;
 pub mod expr;
 pub mod parse;
 pub mod script;
+pub mod solver;
 pub mod trans;
 
 /// Error-handling.

@@ -9,7 +9,7 @@ prelude!(
 /// Meta-declarations: scoped, unlike normal declarations.
 pub type MDecls = Decls;
 
-/// Stack frames for [`doit`].
+/// Stack frames for [`doit`](doit()).
 pub enum Frame<'input> {
     /// Meta-let info.
     MLet(MDecls, Spn<String>),
@@ -103,6 +103,7 @@ pub fn doit(block: Block<Ast, Ast>) -> PRes<Command<Expr, MExpr>> {
             Command::SetOptions(opts) => opts.into(),
             Command::Echo(e) => e.into(),
             Command::Query(Query::Panic(p)) => p.into(),
+            Command::GetModel(gm) => gm.into(),
             Command::Vars(v) => {
                 let clashes = decls.merge(&v.decls);
                 if let Some(clashes) = clashes {

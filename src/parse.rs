@@ -675,6 +675,8 @@ peg::parser! {
             /
             cmd:assert() { Ok(cmd?.into()) }
             /
+            cmd:get_model() { Ok(cmd?.into()) }
+            /
             cmd:echo() { Ok(cmd?.into()) }
             /
             query:query() { Ok(query?.into()) }
@@ -827,6 +829,17 @@ peg::parser! {
             start:position!() "assert!" end:position!()
             _ "{" _ expr:hsmt_expr() _ "}" {
                 Ok(ast::hsmt::Assert::new((start, end), expr))
+            }
+
+        /// An assert.
+        pub rule get_model() -> PRes<ast::hsmt::GetModel>
+        =
+            start:position!() "get_model!" end:position!() _ "(" _ ")" {
+                Ok(ast::hsmt::GetModel::new((start, end)))
+            }
+            /
+            start:position!() "get_model!" end:position!() _ "{" _ "}" {
+                Ok(ast::hsmt::GetModel::new((start, end)))
             }
 
         /// An echo.

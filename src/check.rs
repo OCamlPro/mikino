@@ -9,7 +9,7 @@ use trans::Sys;
 
 pub mod cexs;
 
-pub use cexs::{Cexs, SmtParser, Solver};
+pub use cexs::Cexs;
 
 /// Aggregrates properties that are considered "ok" and properties that have been falsified.
 ///
@@ -59,7 +59,7 @@ impl<'s> CheckRes<'s> {
     ///
     /// - when `po` does not belong to `self.okay`;
     /// - when a falsification for `po` has already been registered.
-    pub fn register_falsification(&mut self, po: &'s String, solver: &mut Solver) -> Res<()> {
+    pub fn register_falsification(&mut self, po: &'s String, solver: &mut SFSolver) -> Res<()> {
         if self.cexs.contains_key(po) {
             bail!("trying to register PO `{}` as falsified twice")
         }
@@ -204,7 +204,7 @@ where
 /// they are not exposed outside of this crate.
 pub struct InternalChecker<'sys> {
     /// Underlying SMT solver.
-    solver: Solver,
+    solver: SFSolver,
     /// Transition system.
     sys: &'sys Sys,
     /// List of all variables of the system.
@@ -212,8 +212,8 @@ pub struct InternalChecker<'sys> {
 }
 impl<'sys> InternalChecker<'sys> {
     /// Constructor.
-    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
-        let solver = Solver::new(z3_cmd, tee)?;
+    pub fn new(sys: &'sys Sys, conf: SmtConf, tee: Option<PathBuf>) -> Res<Self> {
+        let solver = SFSolver::new(conf, tee)?;
         let vars = sys.decls().all().collect();
         Ok(Self { solver, sys, vars })
     }
@@ -328,7 +328,7 @@ impl<'sys> InternalChecker<'sys> {
     }
 
     /// Accessor for the underlying solver.
-    pub fn solver(&mut self) -> &mut Solver {
+    pub fn solver(&mut self) -> &mut SFSolver {
         &mut self.solver
     }
 }
@@ -340,10 +340,13 @@ pub struct Base<'sys> {
 }
 impl<'sys> Base<'sys> {
     /// Constructor.
-    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
-        let tee = tee.map(|s| format!("{}/base.smt2", s.as_ref()));
+    pub fn new(sys: &'sys Sys, conf: SmtConf, tee: Option<PathBuf>) -> Res<Self> {
+        let tee = tee.map(|mut path| {
+            path.push("base.smt2");
+            path
+        });
         Ok(Self {
-            checker: InternalChecker::new(sys, z3_cmd, tee)?,
+            checker: InternalChecker::new(sys, conf, tee)?,
         })
     }
 
@@ -364,10 +367,13 @@ pub struct Step<'sys> {
 }
 impl<'sys> Step<'sys> {
     /// Constructor.
-    pub fn new(sys: &'sys Sys, z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
-        let tee = tee.map(|s| format!("{}/step.smt2", s.as_ref()));
+    pub fn new(sys: &'sys Sys, conf: SmtConf, tee: Option<PathBuf>) -> Res<Self> {
+        let tee = tee.map(|mut path| {
+            path.push("step.smt2");
+            path
+        });
         Ok(Self {
-            checker: InternalChecker::new(sys, z3_cmd, tee)?,
+            checker: InternalChecker::new(sys, conf, tee)?,
         })
     }
 
@@ -441,13 +447,16 @@ impl<'sys> Bmc<'sys> {
     /// Constructor.
     pub fn new(
         sys: &'sys Sys,
-        z3_cmd: impl AsRef<str>,
-        tee: Option<impl AsRef<str>>,
+        conf: SmtConf,
+        tee: Option<PathBuf>,
         res: BmcRes<'sys>,
     ) -> Res<Self> {
-        let tee = tee.map(|s| format!("{}/bmc.smt2", s.as_ref()));
+        let tee = tee.map(|mut path| {
+            path.push("bmc.smt2");
+            path
+        });
 
-        let mut checker = InternalChecker::new(sys, z3_cmd, tee)?;
+        let mut checker = InternalChecker::new(sys, conf, tee)?;
         checker.declare_vars(0)?;
         checker.assert_init()?;
         Ok(Self {

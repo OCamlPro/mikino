@@ -31,10 +31,10 @@ parser = []
 all-features = true
 
 [dependencies]
-either = "^1.6.1"
-error-chain = "^0.12.4"
+either = "^1.6"
+error-chain = "^0.12"
 lazy_static = "^1.4"
 num = "^0.4"
-peg = "^0.7"
+peg = "^0.8"
 readonly = "^0.2"
-rsmt2 = "^0.14"
+rsmt2 = "^0"

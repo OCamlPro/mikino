@@ -2,11 +2,6 @@ mikino_api::prelude!();
 
 fn run() -> Res<()> {
     let input = "
-// set_options!(
-//     conservative-decls: true,
-//     produce-models: true,
-// )
-
 vars!(
     cnt0   cnt1   : int,
     reset0 reset1 : bool,
@@ -45,6 +40,8 @@ assert!(
 if check_sat!() {
     echo!(\"does not compile\")
 }
+
+get_model!()
     ";
 
     println!("```");
@@ -59,9 +56,6 @@ if check_sat!() {
     println!("parsing and building hsmt script...");
 
     let script = mikino_api::parse::script(input)?;
-    println!();
-    println!("got a script:");
-    println!("{:#?}", script);
 
     println!();
     println!();
@@ -72,11 +66,8 @@ if check_sat!() {
         let (prev, row, col, line, next) = span.pretty_of(input);
         Error::parse("", row, col, line, prev, next).extend(e.error.into_iter())
     })?;
-    println!();
-    println!("built a script:");
-    println!("{:#?}", script);
 
-    let mut script = mikino_api::script::Script::new("z3", None, &script, input)?;
+    let mut script = mikino_api::script::Script::new("z3", Some("log.smt2"), &script, input)?;
 
     'step: loop {
         use mikino_api::script::Step;

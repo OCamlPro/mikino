@@ -59,7 +59,7 @@ impl Cex {
     ///
     /// Uses `get_model` to retrieve the counterexample. The solver must have answered `sat` to a PO
     /// falsification query right before it is passed to this function.
-    pub fn populate(&mut self, solver: &mut Solver) -> Res<()> {
+    pub fn populate(&mut self, solver: &mut SFSolver) -> Res<()> {
         let model = solver.get_model().chain_err(|| "while retrieving cex")?;
         for ((var_id, step), args, typ, cst) in model {
             match (cst, step) {
@@ -127,7 +127,7 @@ impl<'sys> Cexs<'sys> {
     /// # Errors
     ///
     /// - when a counterexample for `po` is already registered.
-    pub fn insert_falsification(&mut self, po: &'sys String, solver: &mut Solver) -> Res<()> {
+    pub fn insert_falsification(&mut self, po: &'sys String, solver: &mut SFSolver) -> Res<()> {
         let mut cex = Cex::new();
         cex.populate(solver)?;
         let prev = self.insert(po, cex);
@@ -160,6 +160,7 @@ impl Solver {
             .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
             .trim();
         let mut conf = SmtConf::z3(z3_cmd);
+        conf.check_success();
 
         for opt in split_cmd {
             let opt = opt.trim();
