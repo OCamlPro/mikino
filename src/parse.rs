@@ -48,11 +48,11 @@ impl Span {
         while let Some((row, line)) = lines.next() {
             if line.len() >= count {
                 let (line, next) = {
-                    let next = lines.next().map(|(_, s)| s.to_string());
-                    if next.is_none() {
-                        (format!("{}{}", line, "<EOI>"), next)
-                    } else {
-                        (line.into(), next)
+                    match lines.next().map(|(_, s)| s.to_string()) {
+                        Some(next) if next.is_empty() => (line.into(), None),
+                        Some(next) => (line.into(), Some(next)),
+                        None if text.ends_with('\n') => (line.into(), None),
+                        None => (format!("{}<EOI>", line), None),
                     }
                 };
                 return (prev_line.map(String::from), row, count, line, next);

@@ -14,6 +14,9 @@
 //! Mikino only handles relatively simple SMT-LIB 2 expressions where the only types are `bool`,
 //! `int` and `rat`. For details regarding the expression structures see [`expr`].
 //!
+//! Also, note that you will find a bunch of examples in `repository/examples` which use the
+//! systems/scripts in `repository/rsc`.
+//!
 //! # Scripts
 //!
 //! An **hsmt script** is a Rust-flavored SMT-LIB 2 script, with a twist. The twist is that check
@@ -23,7 +26,7 @@
 //!
 //! - [`parse::script`] for a description of mikino's syntax for hsmt scripts;
 //! - [`script`] for running scripts;
-//! - [`SCRIPT_DEMO`] for a documented hsmt script demo.
+//! - `repository/rsc/script_demo.rs` for a documented hsmt script demo.
 //!
 //! # Transition Systems
 //!
@@ -42,7 +45,7 @@
 //! - [`parse::trans`] for a description of mikino's syntax for hsmt systems;
 //! - [`trans`] for how hsmt systems are structured;
 //! - [`check`] for hsmt system `k`-induction-based verification;
-//! - [`TRANS_DEMO`] for a documented hsmt system demo.
+//! - `repository/rsc/trans_demo.rs` for a documented hsmt system demo.
 //!
 //! [smtlib]: https://smtlib.cs.uiowa.edu/language.shtml
 //! (SMT-LIB's official website)

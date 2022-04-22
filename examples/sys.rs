@@ -15,12 +15,7 @@ fn run() {
     match mikino_api::parse::trans(input) {
         Ok(_) => (),
         Err(e) => {
-            for e in e.into_iter() {
-                for (idx, line) in e.pretty(()).lines().enumerate() {
-                    let pref = if idx == 0 { "- " } else { "  " };
-                    println!("{}{}", line, pref);
-                }
-            }
+            println!("Error:\n{}", e.pretty(()));
             std::process::exit(2);
         }
     }

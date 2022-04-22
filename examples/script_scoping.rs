@@ -1,7 +1,7 @@
 mikino_api::prelude!();
 
 fn run() -> Res<()> {
-    let input = mikino_api::SCRIPT_DEMO;
+    let input = include_str!("../rsc/script_scoping.rs");
 
     println!("```");
     for line in input.trim().lines() {

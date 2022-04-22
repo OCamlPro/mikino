@@ -9,7 +9,7 @@ where
     let input = input.as_ref();
     println!("input:");
     for line in input.lines() {
-        println!("    {}", line);
+        println!("    `{}`", line);
     }
     let res = action(input)
         .map(|t| t.to_string())

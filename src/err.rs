@@ -94,7 +94,11 @@ impl Error {
                     style.bold(&col_str),
                     " ".repeat(row_str.len()),
                     prev.as_ref()
-                        .map(|s| format!(" {}", s))
+                        .map(|s| if !s.is_empty() {
+                            format!(" {}", s)
+                        } else {
+                            "".into()
+                        })
                         .unwrap_or("".into()),
                     style.bold(&row_str),
                     line,
@@ -211,6 +215,25 @@ impl ErrorChain {
     pub fn extend(mut self, errs: impl Iterator<Item = Error>) -> Self {
         self.chain.extend(errs);
         self
+    }
+
+    /// Pretty multi-line string representation.
+    pub fn pretty(&self, style: impl crate::prelude::Style) -> String {
+        let mut s = String::new();
+        for e in self.iter() {
+            for (idx, line) in e.pretty(&style).lines().enumerate() {
+                if !s.is_empty() {
+                    s.push('\n');
+                }
+                if idx == 0 {
+                    s.push_str("- ");
+                } else {
+                    s.push_str("  ");
+                };
+                s.push_str(line);
+            }
+        }
+        s
     }
 }
 impl From<Error> for ErrorChain {

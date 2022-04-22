@@ -17,9 +17,14 @@ categories = ["science"]
 [[example]]
 name = "sys"
 test = true
-
 [[example]]
 name = "script"
+test = true
+[[example]]
+name = "script_scoping"
+test = true
+[[example]]
+name = "script_bad_scoping_1"
 test = true
 
 [package.metadata.docs.rs]
