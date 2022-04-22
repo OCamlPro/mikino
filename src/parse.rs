@@ -414,6 +414,25 @@ peg::parser! {
         }
         / expected!("integer")
 
+        /// Parses an isize.
+        pub rule isize() -> isize
+        = quiet! {
+            sign:("-" _)? code:number() {?
+                let neg = sign.is_some();
+                isize::from_str_radix(code.inner, 10)
+                    .map(|i|
+                        if neg {
+                            - i
+                        } else {
+                            i
+                        }
+                    ).map_err(|e|
+                        "illegal `isize` value"
+                    )
+            }
+        }
+        / expected!("isize value")
+
 
         /// Parses an unsigned [`Int`], cannot be followed by a `.`.
         ///
@@ -827,19 +846,25 @@ peg::parser! {
         /// Command parser.
         pub rule command() -> PRes<ast::script::Command<ast::Expr<'input>, ast::Expr<'input>>>
         =
-            cmd:set_options() { Ok(cmd?.into()) }
-            /
-            cmd:const_decls() { Ok(cmd?.into()) }
-            /
-            cmd:mlet() { Ok(cmd?.into()) }
-            /
-            cmd:assert() { Ok(cmd?.into()) }
-            /
-            cmd:get_model() { Ok(cmd?.into()) }
-            /
-            cmd:echo() { Ok(cmd?.into()) }
-            /
-            query:query() { Ok(query?.into()) }
+            odoc:outer_doc() _ res:(
+                cmd:set_options() { Ok(cmd?.into()) }
+                /
+                cmd:const_decls() { Ok(cmd?.into()) }
+                /
+                cmd:mlet() { Ok(cmd?.into()) }
+                /
+                cmd:assert() { Ok(cmd?.into()) }
+                /
+                cmd:get_model() { Ok(cmd?.into()) }
+                /
+                cmd:echo() { Ok(cmd?.into()) }
+                /
+                cmd:reset() { Ok(cmd?.into()) }
+                /
+                query:query() { Ok(query?.into()) }
+            ) {
+                res
+            }
 
         /// Query parser.
         pub rule query() -> PRes<ast::script::Query<ast::Expr<'input>, ast::Expr<'input>>>
@@ -851,6 +876,8 @@ peg::parser! {
             q:ite() { Ok(q?.into()) }
             /
             q:panic() { Ok(q?.into()) }
+            /
+            q:exit() { Ok(q?.into()) }
 
 
 
@@ -931,6 +958,14 @@ peg::parser! {
                 Ok(ast::script::Panic::new((start, end), msg))
             }
 
+        /// An exit.
+        pub rule exit() -> PRes<ast::script::Exit>
+        =
+            start:position!() "exit!" end:position!()
+            _ "(" _ code:(isize())? _ ")" {
+                Ok(ast::script::Exit::new((start, end), code))
+            }
+
 
 
 
@@ -965,11 +1000,6 @@ peg::parser! {
             _ "{" _ decls:svars() _ "}" {
                 Ok(ast::script::Vars::new((start, end), decls?))
             }
-            /
-            start:position!() "vars!" end:position!()
-            _ "(" _ decls:svars() _ ")" {
-                Ok(ast::script::Vars::new((start, end), decls?))
-            }
 
         /// A meta-binding.
         pub rule mlet() -> PRes<ast::script::MLet>
@@ -981,14 +1011,9 @@ peg::parser! {
         /// An assert.
         pub rule assert() -> PRes<ast::script::Assert<ast::Expr<'input>>>
         =
-            start:position!() "assert!" end:position!()
-            _ "(" _ expr:hsmt_expr() _ ")" {
-                Ok(ast::script::Assert::new((start, end), expr))
-            }
-            /
-            start:position!() "assert!" end:position!()
-            _ "{" _ expr:hsmt_expr() _ "}" {
-                Ok(ast::script::Assert::new((start, end), expr))
+            start:position!() "assert" end:position!()
+            _ "{" exprs:(_ expr:hsmt_expr() _ { expr })++"," _ ","? _ "}" {
+                Ok(ast::script::Assert::new((start, end), exprs))
             }
 
         /// An assert.
@@ -997,25 +1022,29 @@ peg::parser! {
             start:position!() "get_model!" end:position!() _ "(" _ ")" {
                 Ok(ast::script::GetModel::new((start, end)))
             }
-            /
-            start:position!() "get_model!" end:position!() _ "{" _ "}" {
-                Ok(ast::script::GetModel::new((start, end)))
+
+        /// An assert.
+        pub rule reset() -> PRes<ast::script::Reset>
+        =
+            start:position!() "reset!" end:position!() _ "(" _ ")" {
+                Ok(ast::script::Reset::new((start, end)))
             }
 
         /// An echo.
         pub rule echo() -> PRes<ast::script::Echo>
         =
-            start:position!() "echo!" end:position!() _ "{" _ msg:dbl_quoted() _ "}" {
+            start:position!() "echo!" end:position!() _ "{" _ msg:dbl_quoted()? _ "}" {
                 Ok(ast::script::Echo::new((start, end), msg))
             }
             /
-            start:position!() "echo!" end:position!() _ "(" _ msg:dbl_quoted() _ ")" {
+            start:position!() "echo!" end:position!() _ "(" _ msg:dbl_quoted()? _ ")" {
                 Ok(ast::script::Echo::new((start, end), msg))
             }
 
         /// Parses a hsmt script.
         pub rule hsmt_script() -> PRes<ast::script::Block<ast::Expr<'input>, ast::Expr<'input>>>
         =
+            _ odoc:inner_doc()
             _ content:commands() _ {
                 Ok(ast::script::Block::new(content?))
             }
@@ -1035,7 +1064,7 @@ peg::parser! {
 /// - `trans { ... }`: the transition relation, *i.e.* a stateful (`'` primes allowed) expression;
 ///
 /// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
-pub fn sys(txt: &str) -> Res<trans::Sys> {
+pub fn trans(txt: &str) -> Res<trans::Sys> {
     let res: Res<trans::Sys> = match rules::hsmt_sys(txt) {
         Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {

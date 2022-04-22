@@ -1,5 +1,5 @@
 fn run() {
-    let input = mikino_api::DEMO;
+    let input = mikino_api::TRANS_DEMO;
 
     println!("```");
     for line in input.trim().lines() {
@@ -12,7 +12,7 @@ fn run() {
 
     println!("parsing and building transition system...");
 
-    match mikino_api::parse::sys(input) {
+    match mikino_api::parse::trans(input) {
         Ok(_) => (),
         Err(e) => {
             for e in e.into_iter() {

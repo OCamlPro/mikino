@@ -74,12 +74,12 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
             if DEBUG {
                 let pref = str::repeat("  ", stack.len());
                 println!(
-                    "{}[{}] {}: {}, panics: {}",
+                    "{}[{}] {}: {}, exits: {}",
                     pref,
                     stringify!($blah),
                     stringify!($cmd),
                     $cmd.desc(),
-                    $cmd.panics(),
+                    $cmd.exits(),
                 );
                 if meta_decls.all().count() > 0 {
                     println!("{}- meta declarations:", pref);
@@ -102,7 +102,12 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
         let mut res: Command<Expr, MExpr> = match curr {
             Command::SetOptions(opts) => opts.into(),
             Command::Echo(e) => e.into(),
+            Command::Reset(r) => {
+                decls.clear();
+                r.into()
+            }
             Command::Query(Query::Panic(p)) => p.into(),
+            Command::Query(Query::Exit(e)) => e.into(),
             Command::GetModel(gm) => gm.into(),
             Command::Vars(v) => {
                 let clashes = decls.merge(&v.decls);
@@ -125,8 +130,11 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
                 continue 'go_down;
             }
             Command::Assert(a) => {
-                let expr = a.expr.to_expr(&decls)?;
-                Assert::new(a.span, expr).into()
+                let mut exprs = Vec::with_capacity(a.exprs.len());
+                for expr in a.exprs.into_iter() {
+                    exprs.push(expr.to_expr(&decls)?);
+                }
+                Assert::new(a.span, exprs).into()
             }
 
             Command::Query(Query::Block(b)) => {
@@ -279,7 +287,7 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
                         } else {
                             let (thn, thn_decls) = thn;
 
-                            match (thn.panics(), els.panics()) {
+                            match (thn.exits(), els.exits()) {
                                 (true, true) => {
                                     let _ = decls.merge(&thn_decls);
                                 }
@@ -309,7 +317,7 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
                 )) => match res {
                     Command::Query(Query::Block(otw)) => {
                         meta_decls = mdecls;
-                        match (thn.panics(), els.panics(), otw.panics()) {
+                        match (thn.exits(), els.exits(), otw.exits()) {
                             // All branches panic.
                             (true, true, true) => {
                                 let _ = decls.merge(&thn_decls);

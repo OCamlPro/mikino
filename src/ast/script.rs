@@ -10,8 +10,8 @@ pub trait CommandExt {
     fn is_query(&self) -> bool;
     /// A short string description.
     fn desc(&self) -> String;
-    /// True if the command is guaranteed to end in a panic.
-    fn panics(&self) -> bool;
+    /// True if the command is guaranteed to exit the script.
+    fn exits(&self) -> bool;
 }
 
 /// A set-option.
@@ -63,7 +63,7 @@ impl CommandExt for SetOptions {
         s.push(')');
         s
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
@@ -96,8 +96,8 @@ impl<E, ME> CommandExt for Block<E, ME> {
     fn desc(&self) -> String {
         format!("block({})", self.content.len())
     }
-    fn panics(&self) -> bool {
-        self.content.iter().any(Command::panics)
+    fn exits(&self) -> bool {
+        self.content.iter().any(Command::exits)
     }
 }
 impl<E, ME> ops::Index<usize> for Block<E, ME> {
@@ -118,8 +118,8 @@ impl<E, ME> Block<E, ME> {
 pub struct Assert<E> {
     /// Span.
     pub span: Span,
-    /// Expression to assert.
-    pub expr: E,
+    /// Expressions to assert.
+    pub exprs: Vec<E>,
 }
 impl<E> CommandExt for Assert<E> {
     fn is_query(&self) -> bool {
@@ -128,17 +128,17 @@ impl<E> CommandExt for Assert<E> {
     fn desc(&self) -> String {
         format!("assert!")
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
 
 impl<E> Assert<E> {
     /// Constructor.
-    pub fn new(span: impl Into<Span>, expr: E) -> Self {
+    pub fn new(span: impl Into<Span>, exprs: Vec<E>) -> Self {
         Self {
             span: span.into(),
-            expr,
+            exprs,
         }
     }
 }
@@ -158,17 +158,72 @@ impl CommandExt for Echo {
     fn desc(&self) -> String {
         format!("echo!(\"{}\")", self.msg)
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
 
 impl Echo {
     /// Constructor.
-    pub fn new(span: impl Into<Span>, msg: impl Into<String>) -> Self {
+    pub fn new(span: impl Into<Span>, msg: Option<impl Into<String>>) -> Self {
         Self {
             span: span.into(),
-            msg: msg.into(),
+            msg: msg.map(|m| m.into()).unwrap_or_else(|| "".into()),
+        }
+    }
+}
+
+/// Resets the solver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reset {
+    /// Span.
+    pub span: Span,
+}
+impl CommandExt for Reset {
+    fn is_query(&self) -> bool {
+        false
+    }
+    fn desc(&self) -> String {
+        format!("reset()")
+    }
+    fn exits(&self) -> bool {
+        false
+    }
+}
+
+impl Reset {
+    /// Constructor.
+    pub fn new(span: impl Into<Span>) -> Self {
+        Self { span: span.into() }
+    }
+}
+
+/// Exits with an exit code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exit {
+    /// Span.
+    pub span: Span,
+    /// Code.
+    pub code: isize,
+}
+impl CommandExt for Exit {
+    fn is_query(&self) -> bool {
+        true
+    }
+    fn desc(&self) -> String {
+        format!("exit({})", self.code)
+    }
+    fn exits(&self) -> bool {
+        true
+    }
+}
+
+impl Exit {
+    /// Constructor, if `code = None` then the actual code is `0`.
+    pub fn new(span: impl Into<Span>, code: Option<isize>) -> Self {
+        Self {
+            span: span.into(),
+            code: code.unwrap_or(0),
         }
     }
 }
@@ -190,7 +245,7 @@ impl CommandExt for Panic {
     fn desc(&self) -> String {
         format!("panic!(\"{}\")", self.msg)
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         true
     }
 }
@@ -220,7 +275,7 @@ impl CommandExt for Vars {
     fn desc(&self) -> String {
         format!("vars({})", self.decls.all().count())
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
@@ -250,7 +305,7 @@ impl CommandExt for MLet {
     fn desc(&self) -> String {
         format!("meta-let({})", self.lhs.inner)
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
@@ -279,7 +334,7 @@ impl CommandExt for CheckSat {
     fn desc(&self) -> String {
         format!("check-sat")
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
@@ -312,7 +367,7 @@ impl CommandExt for GetModel {
     fn desc(&self) -> String {
         format!("get-model")
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         false
     }
 }
@@ -356,10 +411,8 @@ impl<E, ME> CommandExt for Ite<E, ME> {
     fn desc(&self) -> String {
         format!("ite")
     }
-    fn panics(&self) -> bool {
-        self.thn.panics()
-            && self.els.panics()
-            && self.otw.as_ref().map(|b| b.panics()).unwrap_or(true)
+    fn exits(&self) -> bool {
+        self.thn.exits() && self.els.exits() && self.otw.as_ref().map(|b| b.exits()).unwrap_or(true)
     }
 }
 impl<E, ME> Ite<E, ME> {
@@ -399,6 +452,8 @@ pub enum Query<E, ME> {
     Ite(Ite<E, ME>),
     /// Panic.
     Panic(Panic),
+    /// Exit.
+    Exit(Exit),
 }
 impl<E, ME> CommandExt for Query<E, ME> {
     fn is_query(&self) -> bool {
@@ -407,6 +462,7 @@ impl<E, ME> CommandExt for Query<E, ME> {
             Self::CheckSat(q) => q.is_query(),
             Self::Ite(q) => q.is_query(),
             Self::Panic(q) => q.is_query(),
+            Self::Exit(q) => q.is_query(),
         }
     }
     fn desc(&self) -> String {
@@ -415,14 +471,16 @@ impl<E, ME> CommandExt for Query<E, ME> {
             Self::CheckSat(q) => q.desc(),
             Self::Ite(q) => q.desc(),
             Self::Panic(q) => q.desc(),
+            Self::Exit(q) => q.desc(),
         }
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         match self {
-            Self::Block(b) => b.panics(),
-            Self::CheckSat(q) => q.panics(),
-            Self::Ite(q) => q.panics(),
-            Self::Panic(q) => q.panics(),
+            Self::Block(b) => b.exits(),
+            Self::CheckSat(q) => q.exits(),
+            Self::Ite(q) => q.exits(),
+            Self::Panic(q) => q.exits(),
+            Self::Exit(q) => q.exits(),
         }
     }
 }
@@ -447,6 +505,11 @@ impl<E, ME> From<Panic> for Query<E, ME> {
         Self::Panic(p)
     }
 }
+impl<E, ME> From<Exit> for Query<E, ME> {
+    fn from(e: Exit) -> Self {
+        Self::Exit(e)
+    }
+}
 
 /// A list of commands.
 pub type Commands<E, ME> = Vec<Command<E, ME>>;
@@ -457,8 +520,8 @@ impl<E, ME> CommandExt for Commands<E, ME> {
     fn desc(&self) -> String {
         format!("sequenc of commands")
     }
-    fn panics(&self) -> bool {
-        self.iter().any(Command::panics)
+    fn exits(&self) -> bool {
+        self.iter().any(Command::exits)
     }
 }
 
@@ -479,6 +542,8 @@ pub enum Command<E, ME> {
     GetModel(GetModel),
     /// Commands that can produce boolean results.
     Query(Query<E, ME>),
+    /// Reset.
+    Reset(Reset),
 }
 impl<E, ME> CommandExt for Command<E, ME> {
     fn is_query(&self) -> bool {
@@ -489,6 +554,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Assert(c) => c.is_query(),
             Self::Echo(c) => c.is_query(),
             Self::GetModel(c) => c.is_query(),
+            Self::Reset(q) => q.is_query(),
             Self::Query(q) => q.is_query(),
         }
     }
@@ -500,18 +566,20 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Assert(c) => c.desc(),
             Self::Echo(c) => c.desc(),
             Self::GetModel(c) => c.desc(),
+            Self::Reset(q) => q.desc(),
             Self::Query(q) => q.desc(),
         }
     }
-    fn panics(&self) -> bool {
+    fn exits(&self) -> bool {
         match self {
-            Self::SetOptions(c) => c.panics(),
-            Self::Vars(c) => c.panics(),
-            Self::MLet(c) => c.panics(),
-            Self::Assert(c) => c.panics(),
-            Self::Echo(c) => c.panics(),
-            Self::GetModel(c) => c.panics(),
-            Self::Query(q) => q.panics(),
+            Self::SetOptions(c) => c.exits(),
+            Self::Vars(c) => c.exits(),
+            Self::MLet(c) => c.exits(),
+            Self::Assert(c) => c.exits(),
+            Self::Echo(c) => c.exits(),
+            Self::GetModel(c) => c.exits(),
+            Self::Reset(c) => c.exits(),
+            Self::Query(q) => q.exits(),
         }
     }
 }
@@ -544,6 +612,16 @@ impl<E, ME> From<Echo> for Command<E, ME> {
 impl<E, ME> From<GetModel> for Command<E, ME> {
     fn from(gm: GetModel) -> Self {
         Self::GetModel(gm)
+    }
+}
+impl<E, ME> From<Reset> for Command<E, ME> {
+    fn from(r: Reset) -> Self {
+        Self::Reset(r)
+    }
+}
+impl<E, ME> From<Exit> for Command<E, ME> {
+    fn from(e: Exit) -> Self {
+        Self::Query(e.into())
     }
 }
 

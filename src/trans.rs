@@ -69,6 +69,11 @@ impl Decls {
         }
     }
 
+    /// Empties itself.
+    pub fn clear(&mut self) {
+        self.id_to_typs.clear()
+    }
+
     /// True if `id` is declared.
     pub fn contains(&self, id: impl AsRef<str>) -> bool {
         self.id_to_typs.contains_key(id.as_ref())

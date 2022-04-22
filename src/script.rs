@@ -17,8 +17,8 @@ const DEBUG: bool = false;
 /// Result of running a script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// Everything went fine.
-    Success,
+    /// Done with exit code.
+    Exit(isize),
     /// Panic.
     Panic(parse::Span, String),
 }
@@ -26,7 +26,13 @@ impl Outcome {
     /// Turns itself in a pretty string representation.
     pub fn pretty(&self, txt: &str, style: impl Style) -> String {
         match self {
-            Self::Success => style.green("success").to_string(),
+            Self::Exit(code) => {
+                if *code == 0 {
+                    style.green("success").to_string()
+                } else {
+                    style.red(&format!("exit({})", code)).to_string()
+                }
+            }
             Self::Panic(span, msg) => {
                 format!(
                     "execution {} with `{}` {}",
@@ -44,6 +50,8 @@ impl Outcome {
 pub enum Step {
     /// Check sat result.
     CheckRes(parse::Span, CheckSatResEnum),
+    /// A model.
+    Model(parse::Span, Map<String, (expr::Cst, Typ)>),
     /// Something to print.
     Echo(Echo),
     /// Nothing observable happened.
@@ -69,7 +77,7 @@ impl Step {
     pub fn pretty(&self, txt: &str, style: impl Style) -> Option<String> {
         let s = match self {
             Self::CheckRes(span, check_res) => {
-                let (_, line, col, _, _) = span.pretty_of(txt);
+                let (_, line, _, _, _) = span.pretty_of(txt);
                 let res = match check_res {
                     CheckSatResEnum::True => style.green("sat"),
                     CheckSatResEnum::False => style.green("unsat"),
@@ -79,18 +87,46 @@ impl Step {
                 format!(
                     "[{}@{}] {}",
                     style.under("check_sat"),
-                    style.bold(&format!("{}:{}", line, col)),
+                    style.bold(&format!("{}", line)),
                     res,
                 )
             }
             Self::Echo(msg) => {
-                let (_, line, col, _, _) = msg.span.pretty_of(txt);
-                format!(
-                    "[{}@{}] {}",
-                    style.under("echo"),
-                    style.bold(&format!("{}:{}", line, col)),
-                    msg.msg,
-                )
+                if msg.msg.is_empty() {
+                    "".into()
+                } else {
+                    let (_, line, _, _, _) = msg.span.pretty_of(txt);
+                    format!(
+                        "[{}@{}] {}",
+                        style.under("echo"),
+                        style.bold(&format!("{}", line)),
+                        msg.msg,
+                    )
+                }
+            }
+            Self::Model(span, model) => {
+                let (_, line, _, _, _) = span.pretty_of(txt);
+                let mut s = format!(
+                    "[{}@{}] model {{",
+                    style.under("get_model"),
+                    style.bold(&format!("{}", line))
+                );
+                let max_id_len = model.keys().fold(0, |max, id| max.max(id.len()));
+                for (id, (cst, _)) in model {
+                    s.push_str("\n    ");
+                    for _ in 0..(max_id_len - id.len()) {
+                        s.push(' ');
+                    }
+                    s.push_str(&style.bold(id).to_string());
+                    s.push_str(": ");
+                    s.push_str(&cst.to_string());
+                    s.push_str(",");
+                }
+                if model.len() > 0 {
+                    s.push_str("\n");
+                }
+                s.push_str("}");
+                s
             }
             Self::Nothing => {
                 return None;
@@ -104,7 +140,7 @@ impl Step {
     pub fn is_nothing(&self) -> bool {
         match self {
             Self::Nothing => true,
-            Self::Echo(_) | Self::CheckRes(_, _) | Self::Done(_) => false,
+            Self::Echo(_) | Self::CheckRes(_, _) | Self::Done(_) | Self::Model(_, _) => false,
         }
     }
 }
@@ -431,6 +467,20 @@ impl<'s> Script<'s> {
     pub fn panic(&mut self, panic: &'s Panic) -> Res<()> {
         self.set_step_res(Outcome::Panic(panic.span, panic.msg.clone()))
     }
+    /// Exit.
+    pub fn exit(&mut self, exit: &'s Exit) -> Res<()> {
+        self.set_step_res(Outcome::Exit(exit.code))
+    }
+    /// Reset.
+    pub fn reset(&mut self, reset: &'s Reset) -> Res<()> {
+        try_to_pres! {
+            self.solver.reset() =>
+                in self.txt,
+                at reset.span,
+                with "while resetting the solver",
+        }
+        self.go_up_none()
+    }
 
     /// Echo.
     pub fn echo(&mut self, echo: &'s Echo) -> Res<()> {
@@ -440,12 +490,12 @@ impl<'s> Script<'s> {
 
     /// Assertion.
     pub fn assert(&mut self, a: &'s Assert<Expr>) -> Res<()> {
-        match self.solver.assert_with(&a.expr, ()) {
-            Ok(()) => (),
-            Err(e) => {
-                return Err(PError::new("while handling this assert!", a.span)
-                    .into_error(self.txt)
-                    .chain_err(|| e));
+        for (idx, expr) in a.exprs.iter().enumerate() {
+            try_to_pres! {
+                self.solver.assert(expr) =>
+                    in self.txt,
+                    at a.span,
+                    with "while asserting expression #{} of this assertion", idx+1,
             }
         }
         self.go_up_none()
@@ -453,19 +503,34 @@ impl<'s> Script<'s> {
 
     /// Get model.
     pub fn get_model(&mut self, gm: &'s GetModel) -> Res<()> {
-        match self.solver.get_model() {
-            Ok(model) => {
-                println!("model:");
-                for (var, _args, _typ, val) in model {
-                    println!("    {}: {}", var, val);
+        let model = try_to_pres! {
+            self.solver.get_model() =>
+                in self.txt,
+                at gm.span,
+                with "while requesting a model"
+        };
+        let mut model_map = Map::new();
+        for (id, args, typ, val) in model {
+            if !args.is_empty() {
+                try_to_pres! {
+                    Err("unexpected function in model") =>
+                        in self.txt,
+                        at gm.span,
+                        with "in this `get_model`"
                 }
             }
-            Err(e) => {
-                return Err(PError::new("while handling this assert!", gm.span)
-                    .into_error(self.txt)
-                    .chain_err(|| e));
+            if model_map.contains_key(&id) {
+                try_to_pres! {
+                    Err(format!("illegal model specifies `{}` twice", id)) =>
+                        in self.txt,
+                        at gm.span,
+                        with "in the result of this `get_model`"
+                }
             }
+            let _prev = model_map.insert(id, (val, typ));
+            debug_assert_eq!(_prev, None)
         }
+        self.set_step_res(Step::Model(gm.span, model_map))?;
         self.go_up_none()
     }
 
@@ -536,6 +601,7 @@ impl<'s> Script<'s> {
             Command::MLet(mlet) => self.mlet(mlet),
             Command::Assert(a) => self.assert(a),
             Command::GetModel(gm) => self.get_model(gm),
+            Command::Reset(reset) => self.reset(reset),
             Command::Query(q) => self.go_down_query(q),
         }
     }
@@ -546,6 +612,7 @@ impl<'s> Script<'s> {
             Query::CheckSat(c) => self.go_down_check_sat(c),
             Query::Ite(ite) => self.ite(ite, None),
             Query::Panic(panic) => self.panic(panic),
+            Query::Exit(exit) => self.exit(exit),
         }
     }
     /// Goes down a check sat.
@@ -561,7 +628,7 @@ impl<'s> Script<'s> {
         match self.stack.pop() {
             None => {
                 self.step_res.update(qres)?;
-                self.outcome = Some(Outcome::Success);
+                self.outcome = Some(Outcome::Exit(0));
             }
             Some(C::MLet(mlet)) => {
                 let s = &mlet.mlet.lhs;

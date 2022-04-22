@@ -24,12 +24,12 @@ where
 fn error_pos() {
     run(
         "// Blah.\nerr_token",
-        |input| sys(input).map(|_| "sys"),
+        |input| trans(input).map(|_| "sys"),
         Ok("parse error at 2:1:  | err_token<EOI>, expected \"svars\", run mikino in 'demo' mode for more details about the syntax"),
     );
     run(
         "// Blah.",
-        |input| sys(input).map(|_| "sys"),
+        |input| trans(input).map(|_| "sys"),
         Ok("parse error at 1:9:  | // Blah.<EOI>, expected \"svars\", run mikino in 'demo' mode for more details about the syntax"),
     );
 }
@@ -94,7 +94,7 @@ fn errors() {
         for line in input.lines() {
             println!(" | {}", line);
         }
-        match crate::parse::sys(input) {
+        match crate::parse::trans(input) {
             Ok(_) => panic!("got an okay result"),
             Err(e) => {
                 for e in e.into_iter() {
