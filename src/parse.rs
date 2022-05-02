@@ -195,7 +195,8 @@ pub fn fail_if_kw(ident: impl AsRef<str>) -> Result<(), String> {
 peg::parser! {
     /// PEG parsing rules, requires the `parser` feature.
     ///
-    /// The [`DEMO` constant][crate::DEMO] illustrates and discusses the syntax expected by the parser.
+    /// The [`crate::TRANS_DEMO`] constant illustrates and discusses the syntax expected by the
+    /// parser.
     pub grammar rules() for str {
         /// Whitespace.
         pub rule whitespace() = quiet! {
@@ -783,8 +784,8 @@ peg::parser! {
 
         /// Parses a full instance.
         ///
-        /// Same documentation as [the `sys` function][super::sys].
-        pub rule hsmt_sys() -> PRes<trans::Sys>
+        /// Same documentation as [the `trans` function][crate::parse::trans].
+        pub rule hsmt_trans() -> PRes<trans::Sys>
         =
         sys_doc:inner_doc()
 
@@ -1065,7 +1066,7 @@ peg::parser! {
 ///
 /// - `candidates { ... }`: some [candidates][rules::candidates] to prove over the systems.
 pub fn trans(txt: &str) -> Res<trans::Sys> {
-    let res: Res<trans::Sys> = match rules::hsmt_sys(txt) {
+    let res: Res<trans::Sys> = match rules::hsmt_trans(txt) {
         Ok(res) => res.map_err(|e| e.into_error(txt)),
         Err(e) => {
             // println!("peg parse error");

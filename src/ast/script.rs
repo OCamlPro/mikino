@@ -389,8 +389,8 @@ pub struct Ite<E, ME> {
     pub span: Span,
     /// Condition.
     ///
-    /// The [`Expr`] variant is quite restrictive: it can only be a purely boolean term the leaves
-    /// of which must all be meta-variables (of type bool). This is check by
+    /// The [`expr::Expr`] variant is quite restrictive: it can only be a purely boolean term the
+    /// leaves of which must all be meta-variables (of type bool). This is check by
     /// [`Self.check_cnd_expr`].
     pub cnd: Either<Spn<expr::MetaVar>, CheckSat>,
     /// Then branch.

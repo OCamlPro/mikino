@@ -6,7 +6,7 @@
 //! of the mikino API unfamiliar with (SMT-based) formal verification.
 //!
 //! This crate deals with two main objects: [*hsmt* scripts](#scripts) and [*hsmt* (transition)
-//! systems](#transition-systems), where *hsmt* stands for **H**uman [**SMT**-LIB 2](smtlib).
+//! systems](#transition-systems), where *hsmt* stands for **H**uman [**SMT**-LIB 2][smtlib].
 //! Mikino has the ability to run scripts, and (dis)prove properties over transition systems using
 //! `k`-induction. Both features are realized using [SMT solvers], see [the `solver`
 //! module](solver) for more.
