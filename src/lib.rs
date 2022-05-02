@@ -24,7 +24,8 @@
 //! check_sat!()`. Users can then *branch* on check sat results using `if-then-else`s. For more,
 //! see
 //!
-//! - [`parse::script`] for a description of mikino's syntax for hsmt scripts;
+//! - [`SCRIPT_DEMO`] for a description of mikino's syntax for hsmt scripts;
+//! - [`parse::script`] for parsing scripts;
 //! - [`script`] for running scripts;
 //! - `repository/rsc/script_demo.rs` for a documented hsmt script demo.
 //!
@@ -42,7 +43,8 @@
 //!
 //! For more, see
 //!
-//! - [`parse::trans`] for a description of mikino's syntax for hsmt systems;
+//! - [`TRANS_DEMO`] for a description of mikino's syntax for hsmt systems;
+//! - [`parse::trans`] for parsing hsmt systems;
 //! - [`trans`] for how hsmt systems are structured;
 //! - [`check`] for hsmt system `k`-induction-based verification;
 //! - `repository/rsc/trans_demo.rs` for a documented hsmt system demo.
