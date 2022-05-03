@@ -148,6 +148,8 @@ impl<E> Assert<E> {
 pub struct Echo {
     /// Span.
     pub span: Span,
+    /// Actual echo token, might be a `println`.
+    pub token: String,
     /// Message.
     pub msg: String,
 }
@@ -156,7 +158,7 @@ impl CommandExt for Echo {
         false
     }
     fn desc(&self) -> String {
-        format!("echo!(\"{}\")", self.msg)
+        format!("{}!(\"{}\")", self.token, self.msg)
     }
     fn exits(&self) -> bool {
         false
@@ -165,9 +167,14 @@ impl CommandExt for Echo {
 
 impl Echo {
     /// Constructor.
-    pub fn new(span: impl Into<Span>, msg: Option<impl Into<String>>) -> Self {
+    pub fn new(
+        span: impl Into<Span>,
+        token: impl Into<String>,
+        msg: Option<impl Into<String>>,
+    ) -> Self {
         Self {
             span: span.into(),
+            token: token.into(),
             msg: msg.map(|m| m.into()).unwrap_or_else(|| "".into()),
         }
     }
@@ -359,6 +366,8 @@ impl CheckSat {
 pub struct GetModel {
     /// Keyword span.
     pub span: Span,
+    /// Token used to invque the command.
+    pub token: String,
 }
 impl CommandExt for GetModel {
     fn is_query(&self) -> bool {
@@ -374,8 +383,44 @@ impl CommandExt for GetModel {
 
 impl GetModel {
     /// Constructor.
-    pub fn new(span: impl Into<Span>) -> Self {
-        Self { span: span.into() }
+    pub fn new(span: impl Into<Span>, token: impl Into<String>) -> Self {
+        Self {
+            span: span.into(),
+            token: token.into(),
+        }
+    }
+}
+
+/// Some evaluation requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetValues<E> {
+    /// Keyword span.
+    pub span: Span,
+    /// Token provided by user.
+    pub token: String,
+    /// Expressions to evaluate and their string user-representation.
+    pub exprs: Vec<(E, String)>,
+}
+impl<E> CommandExt for GetValues<E> {
+    fn is_query(&self) -> bool {
+        false
+    }
+    fn desc(&self) -> String {
+        format!("get-value")
+    }
+    fn exits(&self) -> bool {
+        false
+    }
+}
+
+impl<E> GetValues<E> {
+    /// Constructor.
+    pub fn new(span: impl Into<Span>, token: impl Into<String>, exprs: Vec<(E, String)>) -> Self {
+        Self {
+            span: span.into(),
+            token: token.into(),
+            exprs,
+        }
     }
 }
 
@@ -518,7 +563,7 @@ impl<E, ME> CommandExt for Commands<E, ME> {
         self.last().map(Command::is_query).unwrap_or(false)
     }
     fn desc(&self) -> String {
-        format!("sequenc of commands")
+        format!("sequence of commands")
     }
     fn exits(&self) -> bool {
         self.iter().any(Command::exits)
@@ -540,6 +585,8 @@ pub enum Command<E, ME> {
     Echo(Echo),
     /// Get model.
     GetModel(GetModel),
+    /// Evaluation request.
+    GetValues(GetValues<E>),
     /// Commands that can produce boolean results.
     Query(Query<E, ME>),
     /// Reset.
@@ -554,6 +601,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Assert(c) => c.is_query(),
             Self::Echo(c) => c.is_query(),
             Self::GetModel(c) => c.is_query(),
+            Self::GetValues(c) => c.is_query(),
             Self::Reset(q) => q.is_query(),
             Self::Query(q) => q.is_query(),
         }
@@ -566,6 +614,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Assert(c) => c.desc(),
             Self::Echo(c) => c.desc(),
             Self::GetModel(c) => c.desc(),
+            Self::GetValues(c) => c.desc(),
             Self::Reset(q) => q.desc(),
             Self::Query(q) => q.desc(),
         }
@@ -578,6 +627,7 @@ impl<E, ME> CommandExt for Command<E, ME> {
             Self::Assert(c) => c.exits(),
             Self::Echo(c) => c.exits(),
             Self::GetModel(c) => c.exits(),
+            Self::GetValues(c) => c.exits(),
             Self::Reset(c) => c.exits(),
             Self::Query(q) => q.exits(),
         }
@@ -612,6 +662,11 @@ impl<E, ME> From<Echo> for Command<E, ME> {
 impl<E, ME> From<GetModel> for Command<E, ME> {
     fn from(gm: GetModel) -> Self {
         Self::GetModel(gm)
+    }
+}
+impl<E, ME> From<GetValues<E>> for Command<E, ME> {
+    fn from(gm: GetValues<E>) -> Self {
+        Self::GetValues(gm)
     }
 }
 impl<E, ME> From<Reset> for Command<E, ME> {

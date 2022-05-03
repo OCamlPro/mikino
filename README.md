@@ -13,6 +13,7 @@ Contents:
 - [SMT Solver (Z3)](#smt-solver-z3)
 - [Building From Source](#building-from-source)
 - [Transition Systems](#transition-systems)
+- [Scripts](#scripts)
 - [Dependencies](#dependencies)
 - [License](#license)
 
@@ -154,9 +155,16 @@ last state of the sequence falsifies the PO.
 > ```
 
 
+# Scripts
+
+Mikino also has a `script` mode which runs scripts in Rust-flavored SMT-LIB 2. The syntax is very
+similar to that of transition system, check out the demo by running `mikino demo --script
+demo_script.rs`.
+
+
 # Dependencies
 
-Mikino relies on the following stellar libraries:
+Mikino relies on the following *stellar* libraries:
 
 - [`either`](https://crates.io/crates/either)
 - [`error-chain`](https://crates.io/crates/error-chain)

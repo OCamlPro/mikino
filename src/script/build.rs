@@ -129,6 +129,13 @@ pub fn doit(block: Block<ast::Expr, ast::Expr>) -> PRes<Command<Expr, MExpr>> {
                 curr = ml.rhs.into();
                 continue 'go_down;
             }
+            Command::GetValues(gv) => {
+                let mut vals = Vec::with_capacity(gv.exprs.len());
+                for (expr, repr) in gv.exprs.into_iter() {
+                    vals.push((expr.to_expr(&decls)?, repr))
+                }
+                GetValues::new(gv.span, gv.token, vals).into()
+            }
             Command::Assert(a) => {
                 let mut exprs = Vec::with_capacity(a.exprs.len());
                 for expr in a.exprs.into_iter() {

@@ -34,11 +34,11 @@ fn run() -> Res<()> {
         use mikino_api::script::Step;
         match script.step()? {
             Step::Done(res) => {
-                println!("{}", res.pretty(input, ()));
+                println!("{}", res.pretty(input, (), true));
                 break 'step;
             }
             step => {
-                if let Some(pretty) = step.pretty(input, ()) {
+                if let Some(pretty) = step.pretty(input, (), true) {
                     println!("{}", pretty)
                 }
             }

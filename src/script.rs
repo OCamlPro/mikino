@@ -14,28 +14,51 @@ const DEBUG: bool = false;
 
 // use frame::Frame;
 
+/// Generates the prefix for pretty commands.
+fn pos_pref(style: impl Style, activate: bool, desc: &str, line: usize) -> String {
+    if activate {
+        format!(
+            "[{}@{}]\n",
+            style.under(desc),
+            style.bold(&line.to_string())
+        )
+    } else {
+        "".into()
+    }
+}
+
 /// Result of running a script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// Done with exit code.
-    Exit(isize),
+    Exit(Option<parse::Span>, isize),
     /// Panic.
     Panic(parse::Span, String),
 }
 impl Outcome {
     /// Turns itself in a pretty string representation.
-    pub fn pretty(&self, txt: &str, style: impl Style) -> String {
+    pub fn pretty(&self, txt: &str, style: impl Style, with_pos: bool) -> String {
         match self {
-            Self::Exit(code) => {
-                if *code == 0 {
-                    style.green("success").to_string()
+            Self::Exit(span_opt, code) => {
+                let pref = if let Some(span) = span_opt {
+                    let (_, line, _, _, _) = span.pretty_of(txt);
+                    pos_pref(&style, with_pos, "exit", line)
                 } else {
-                    style.red(&format!("exit({})", code)).to_string()
+                    "".into()
+                };
+                if *code == 0 {
+                    format!("{}{}", pref, style.green("success"))
+                } else {
+                    format!(
+                        "{}done with exit code {}",
+                        pref,
+                        style.red(&code.to_string())
+                    )
                 }
             }
             Self::Panic(span, msg) => {
                 format!(
-                    "execution {} with `{}` {}",
+                    "script {} with `{}` at\n{}",
                     style.red("panicked"),
                     msg,
                     span.pretty_ml_of(txt, style, ""),
@@ -51,7 +74,23 @@ pub enum Step {
     /// Check sat result.
     CheckRes(parse::Span, CheckSatResEnum),
     /// A model.
-    Model(parse::Span, Map<String, (expr::Cst, Typ)>),
+    Model {
+        /// Command span.
+        span: parse::Span,
+        /// Token used to invoke the command.
+        token: String,
+        /// Model.
+        model: Map<String, (expr::Cst, Typ)>,
+    },
+    /// An evaluation.
+    Eval {
+        /// Command span.
+        span: parse::Span,
+        /// Token used to invoke the command.
+        token: String,
+        /// Values.
+        vals: Vec<(String, expr::Cst)>,
+    },
     /// Something to print.
     Echo(Echo),
     /// Nothing observable happened.
@@ -74,7 +113,8 @@ impl Step {
     }
 
     /// Pretty representation.
-    pub fn pretty(&self, txt: &str, style: impl Style) -> Option<String> {
+    pub fn pretty(&self, txt: &str, style: impl Style, with_pos: bool) -> Option<String> {
+        let pos = |desc, line: usize| pos_pref(&style, with_pos, desc, line);
         let s = match self {
             Self::CheckRes(span, check_res) => {
                 let (_, line, _, _, _) = span.pretty_of(txt);
@@ -84,33 +124,19 @@ impl Step {
                     CheckSatResEnum::Timeout => style.red("timeout"),
                     CheckSatResEnum::Unknown => style.red("unknown"),
                 };
-                format!(
-                    "[{}@{}] {}",
-                    style.under("check_sat"),
-                    style.bold(&format!("{}", line)),
-                    res,
-                )
+                format!("{}{}", pos("check_sat", line), res,)
             }
             Self::Echo(msg) => {
                 if msg.msg.is_empty() {
                     "".into()
                 } else {
                     let (_, line, _, _, _) = msg.span.pretty_of(txt);
-                    format!(
-                        "[{}@{}] {}",
-                        style.under("echo"),
-                        style.bold(&format!("{}", line)),
-                        msg.msg,
-                    )
+                    format!("{}// {}", pos(&msg.token, line), msg.msg,)
                 }
             }
-            Self::Model(span, model) => {
+            Self::Model { span, token, model } => {
                 let (_, line, _, _, _) = span.pretty_of(txt);
-                let mut s = format!(
-                    "[{}@{}] model {{",
-                    style.under("get_model"),
-                    style.bold(&format!("{}", line))
-                );
+                let mut s = format!("{}model {{", pos(token, line),);
                 let max_id_len = model.keys().fold(0, |max, id| max.max(id.len()));
                 for (id, (cst, _)) in model {
                     s.push_str("\n    ");
@@ -128,10 +154,27 @@ impl Step {
                 s.push_str("}");
                 s
             }
+            Self::Eval { span, token, vals } => {
+                let (_, line, _, _, _) = span.pretty_of(txt);
+                let mut s = format!("{}values {{", pos(token, line),);
+                for (repr, val) in vals {
+                    s.push_str("\n    ");
+                    let clean = Expr::clean_repr(repr);
+                    s.push_str(&style.bold(&clean).to_string());
+                    s.push_str("\n        = ");
+                    s.push_str(&val.to_string());
+                    s.push_str(",");
+                }
+                if vals.len() > 0 {
+                    s.push_str("\n");
+                }
+                s.push_str("}");
+                s
+            }
             Self::Nothing => {
                 return None;
             }
-            Self::Done(out) => out.pretty(txt, style),
+            Self::Done(out) => out.pretty(txt, style, with_pos),
         };
         Some(s)
     }
@@ -140,7 +183,11 @@ impl Step {
     pub fn is_nothing(&self) -> bool {
         match self {
             Self::Nothing => true,
-            Self::Echo(_) | Self::CheckRes(_, _) | Self::Done(_) | Self::Model(_, _) => false,
+            Self::Echo(_)
+            | Self::CheckRes(_, _)
+            | Self::Done(_)
+            | Self::Model { .. }
+            | Self::Eval { .. } => false,
         }
     }
 }
@@ -469,7 +516,7 @@ impl<'s> Script<'s> {
     }
     /// Exit.
     pub fn exit(&mut self, exit: &'s Exit) -> Res<()> {
-        self.set_step_res(Outcome::Exit(exit.code))
+        self.set_step_res(Outcome::Exit(Some(exit.span), exit.code))
     }
     /// Reset.
     pub fn reset(&mut self, reset: &'s Reset) -> Res<()> {
@@ -503,23 +550,23 @@ impl<'s> Script<'s> {
 
     /// Get model.
     pub fn get_model(&mut self, gm: &'s GetModel) -> Res<()> {
-        let model = try_to_pres! {
+        let smt_model = try_to_pres! {
             self.solver.get_model() =>
                 in self.txt,
                 at gm.span,
                 with "while requesting a model"
         };
-        let mut model_map = Map::new();
-        for (id, args, typ, val) in model {
+        let mut model = Map::new();
+        for (id, args, typ, val) in smt_model {
             if !args.is_empty() {
                 try_to_pres! {
                     Err("unexpected function in model") =>
                         in self.txt,
                         at gm.span,
-                        with "in this `get_model`"
+                        with "in this `{}`", gm.token
                 }
             }
-            if model_map.contains_key(&id) {
+            if model.contains_key(&id) {
                 try_to_pres! {
                     Err(format!("illegal model specifies `{}` twice", id)) =>
                         in self.txt,
@@ -527,10 +574,52 @@ impl<'s> Script<'s> {
                         with "in the result of this `get_model`"
                 }
             }
-            let _prev = model_map.insert(id, (val, typ));
+            let _prev = model.insert(id, (val, typ));
             debug_assert_eq!(_prev, None)
         }
-        self.set_step_res(Step::Model(gm.span, model_map))?;
+        self.set_step_res(Step::Model {
+            span: gm.span,
+            token: gm.token.clone(),
+            model,
+        })?;
+        self.go_up_none()
+    }
+
+    /// Get values.
+    ///
+    /// This function is hopeful that the solver produces values in the same order as it was asked
+    /// to. There is no check that the expression/value pairs returned correspond to `gv.exprs`,
+    /// besides checking that both lists have the same length.
+    pub fn get_values(&mut self, gv: &'s GetValues<Expr>) -> Res<()> {
+        let smt_vals = try_to_pres! {
+            self.solver.get_values(gv.exprs.iter().map(|pair| &pair.0)) =>
+                in self.txt,
+                at gv.span,
+                with "while performing an evaluation"
+        };
+        if gv.exprs.len() != smt_vals.len() {
+            try_to_pres! {
+                Err(format!(
+                    "solver produced {} value(s), expected {}",
+                    smt_vals.len(),
+                    gv.exprs.len(),
+                )) =>
+                    in self.txt,
+                    at gv.span,
+                    with "handling this evaluation request"
+            }
+        }
+
+        let mut vals = Vec::with_capacity(smt_vals.len());
+        for ((_, repr), (_, val)) in gv.exprs.iter().zip(smt_vals.into_iter()) {
+            vals.push((repr.clone(), val))
+        }
+
+        self.set_step_res(Step::Eval {
+            span: gv.span,
+            token: gv.token.clone(),
+            vals,
+        })?;
         self.go_up_none()
     }
 
@@ -601,6 +690,7 @@ impl<'s> Script<'s> {
             Command::MLet(mlet) => self.mlet(mlet),
             Command::Assert(a) => self.assert(a),
             Command::GetModel(gm) => self.get_model(gm),
+            Command::GetValues(gm) => self.get_values(gm),
             Command::Reset(reset) => self.reset(reset),
             Command::Query(q) => self.go_down_query(q),
         }
@@ -628,7 +718,7 @@ impl<'s> Script<'s> {
         match self.stack.pop() {
             None => {
                 self.step_res.update(qres)?;
-                self.outcome = Some(Outcome::Exit(0));
+                self.outcome = Some(Outcome::Exit(None, 0));
             }
             Some(C::MLet(mlet)) => {
                 let s = &mlet.mlet.lhs;

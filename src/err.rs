@@ -56,10 +56,10 @@ impl Error {
     pub fn pretty(&self, style: impl crate::prelude::Style) -> String {
         match self {
             Self::Io(e) => {
-                format!("{} error: {}", style.under("IO"), e)
+                format!("IO error: {}", e)
             }
             Self::Smt(e) => {
-                let mut s = format!("{} error:", style.under("smt-level"));
+                let mut s = format!("smt-level error:");
                 for e in e.iter() {
                     s.push_str(&format!("\n- {}", e));
                 }

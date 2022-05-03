@@ -92,6 +92,29 @@ impl<'a, Br: std::io::BufRead> rsmt2::parse::ModelParser<String, Typ, Cst, &'a m
         }
     }
 }
+impl<'a, Br: std::io::BufRead> rsmt2::parse::ValueParser<Cst, &'a mut RSmtParser<Br>>
+    for StatelessParser
+{
+    fn parse_value(self, input: &'a mut RSmtParser<Br>) -> SmtRes<Cst> {
+        let sexpr = input.get_sexpr()?;
+        let mut parser = Parser::new(sexpr);
+        if let Ok(Some(cst)) = parser.try_cst() {
+            Ok(cst)
+        } else {
+            Err(format!("expected constant, got `{}`", sexpr).into())
+        }
+    }
+}
+
+/// So yeah, we're completely ignoring expressions when parsing values.
+impl<'a, Br: std::io::BufRead> rsmt2::parse::ExprParser<(), (), &'a mut RSmtParser<Br>>
+    for StatelessParser
+{
+    fn parse_expr(self, input: &'a mut RSmtParser<Br>, (): ()) -> SmtRes<()> {
+        let _sexpr = input.get_sexpr()?;
+        Ok(())
+    }
+}
 
 /// Wrapper for rsmt2's solver equipped with one of our parser.
 pub struct Solver<P> {

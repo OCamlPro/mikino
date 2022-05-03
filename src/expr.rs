@@ -1014,6 +1014,34 @@ impl<V> PExpr<V> {
         }
     }
 
+    /// Cleans a string representation.
+    ///
+    /// This is useful for get-values/evals commands as they store the user representation for
+    /// expressions to evaluate. This function basically trims the string and collapses all
+    /// consecutive whitespaces in a single space.
+    pub fn clean_repr(s: impl AsRef<str>) -> String {
+        let s = s.as_ref();
+        let s = s.trim();
+
+        let mut res = String::with_capacity(s.len());
+        let mut ws_mode = false;
+        for char in s.chars() {
+            match (char.is_whitespace(), ws_mode) {
+                (true, true) => (),
+                (true, false) => {
+                    ws_mode = true;
+                    res.push(' ')
+                }
+                (false, _) => {
+                    ws_mode = false;
+                    res.push(char)
+                }
+            }
+        }
+        res.shrink_to_fit();
+        res
+    }
+
     /// Negation of a reference to an expression.
     ///
     /// This is mostly useful in cases when we have a reference to an expression we don't want to

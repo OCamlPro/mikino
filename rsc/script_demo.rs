@@ -80,10 +80,11 @@ let is_sat = check_sat!();
 
 /// Meta-variables can then be used in branching.
 if is_sat {
-	echo!("sat 😿")
+	// Can use `println!` instead of `echo!`.
+	println!("sat 😿")
 	get_model!()
 } else {
-	echo!("unsat 😸")
+	println!("unsat 😸")
 }
 // No `otherwise` branch, will panic if the check sat was inconclusive.
 
@@ -135,7 +136,7 @@ let not_strictly_positive = check_sat!();
 
 /// Let's take a look.
 if not_strictly_positive {
-	echo!("yeah, `next_cnt` can actually be negative if `reset`:")
+	echo!("yeah, `next_cnt` can actually be not strictly positive if `reset`:")
 	get_model!()
 } else {
 	panic!("unreachable")

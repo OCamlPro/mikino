@@ -662,6 +662,12 @@ peg::parser! {
             }
         }
 
+        /// Same as [`hsmt_expr`].
+        pub rule hsmt_expr_with_repr() -> (ast::Expr<'input>, String)
+        = repr:&($(hsmt_expr())) expr:hsmt_expr() {
+            (expr, repr.into())
+        }
+
         /// Parses a type.
         ///
         /// Can be `int`, `rat`, or `bool`.
@@ -858,6 +864,8 @@ peg::parser! {
                 /
                 cmd:get_model() { Ok(cmd?.into()) }
                 /
+                cmd:get_values() { Ok(cmd?.into()) }
+                /
                 cmd:echo() { Ok(cmd?.into()) }
                 /
                 cmd:reset() { Ok(cmd?.into()) }
@@ -985,7 +993,9 @@ peg::parser! {
         /// A sequence of `set-option`s.
         pub rule set_options() -> PRes<ast::script::SetOptions>
         =
-            start:position!() ("set_options!"/"set_option!") end:position!()
+            start:position!() (
+                "set_options" / "set_option"
+            ) end:position!()
             _ "("
                 opts:(
                     _ opt:set_option() _ { opt }
@@ -999,6 +1009,10 @@ peg::parser! {
         =
             start:position!() "vars" end:position!()
             _ "{" _ decls:svars() _ "}" {
+                Ok(ast::script::Vars::new((start, end), decls?))
+            }
+            / start:position!() "vars" end:position!()
+            _ "(" _ decls:svars() _ ")" {
                 Ok(ast::script::Vars::new((start, end), decls?))
             }
 
@@ -1016,12 +1030,36 @@ peg::parser! {
             _ "{" exprs:(_ expr:hsmt_expr() _ { expr })++"," _ ","? _ "}" {
                 Ok(ast::script::Assert::new((start, end), exprs))
             }
+            /
+            start:position!() "assert" end:position!()
+            _ "(" exprs:(_ expr:hsmt_expr() _ { expr })++"," _ ","? _ ")" {
+                Ok(ast::script::Assert::new((start, end), exprs))
+            }
 
         /// An assert.
         pub rule get_model() -> PRes<ast::script::GetModel>
         =
-            start:position!() "get_model!" end:position!() _ "(" _ ")" {
-                Ok(ast::script::GetModel::new((start, end)))
+            start:position!() token:$("get_model") "!" end:position!() _ "(" _ ")" {
+                Ok(ast::script::GetModel::new((start, end), token))
+            }
+            /
+            start:position!() token:$("get_model") "!" end:position!() _ "{" _ "}" {
+                Ok(ast::script::GetModel::new((start, end), token))
+            }
+
+        /// An assert.
+        pub rule get_values() -> PRes<ast::script::GetValues<ast::Expr<'input>>>
+        =
+            start:position!() token:$("get_values"/"eval") "!" end:position!() _ "("
+                _ exprs:(_ expr:hsmt_expr_with_repr() _ { expr })++"," _ ","?
+            _ ")" {
+                Ok(ast::script::GetValues::new((start, end), token, exprs))
+            }
+            /
+            start:position!() token:$("get_values"/"eval") "!" end:position!() _ "{"
+                _ exprs:(_ expr:hsmt_expr_with_repr() _ { expr })++"," _ ","?
+            _ "}" {
+                Ok(ast::script::GetValues::new((start, end), token, exprs))
             }
 
         /// An assert.
@@ -1030,16 +1068,28 @@ peg::parser! {
             start:position!() "reset!" end:position!() _ "(" _ ")" {
                 Ok(ast::script::Reset::new((start, end)))
             }
+            /
+            start:position!() "reset!" end:position!() _ "{" _ "}" {
+                Ok(ast::script::Reset::new((start, end)))
+            }
 
         /// An echo.
         pub rule echo() -> PRes<ast::script::Echo>
         =
-            start:position!() "echo!" end:position!() _ "{" _ msg:dbl_quoted()? _ "}" {
-                Ok(ast::script::Echo::new((start, end), msg))
+            start:position!()
+                token:$("echo"/"println") "!"
+            end:position!() _ "{"
+                _ msg:dbl_quoted()? _
+            "}" {
+                Ok(ast::script::Echo::new((start, end), token, msg))
             }
             /
-            start:position!() "echo!" end:position!() _ "(" _ msg:dbl_quoted()? _ ")" {
-                Ok(ast::script::Echo::new((start, end), msg))
+            start:position!()
+                token:$("echo"/"println") "!"
+            end:position!() _ "("
+                _ msg:dbl_quoted()? _
+            ")" {
+                Ok(ast::script::Echo::new((start, end), token, msg))
             }
 
         /// Parses a hsmt script.
