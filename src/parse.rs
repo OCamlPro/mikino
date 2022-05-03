@@ -907,14 +907,14 @@ peg::parser! {
         /// Check sat.
         pub rule check_sat() -> PRes<ast::script::CheckSat>
         =
-            start:position!() "check_sat!" end:position!()
+            start:position!() "check_sat" "!"? end:position!()
             _ "("
                 // (_ key:$(ident()) _ ":" _ ""
             _ ")" {
                 Ok(ast::script::CheckSat::new((start, end), None, None))
             }
             /
-            start:position!() "check_sat!" end:position!()
+            start:position!() "check_sat" "!"? end:position!()
             _ "{"
                 // (_ key:$(ident()) _ ":" _ ""
             _ "}" {
@@ -957,12 +957,12 @@ peg::parser! {
         /// A panic.
         pub rule panic() -> PRes<ast::script::Panic>
         =
-            start:position!() "panic!" end:position!()
+            start:position!() "panic" "!"? end:position!()
             _ "{" _ msg:dbl_quoted() _ "}" {
                 Ok(ast::script::Panic::new((start, end), msg))
             }
             /
-            start:position!() "panic!" end:position!()
+            start:position!() "panic" "!"? end:position!()
             _ "(" _ msg:dbl_quoted() _ ")" {
                 Ok(ast::script::Panic::new((start, end), msg))
             }
@@ -970,7 +970,7 @@ peg::parser! {
         /// An exit.
         pub rule exit() -> PRes<ast::script::Exit>
         =
-            start:position!() "exit!" end:position!()
+            start:position!() "exit" "!"? end:position!()
             _ "(" _ code:(isize())? _ ")" {
                 Ok(ast::script::Exit::new((start, end), code))
             }
@@ -1039,24 +1039,24 @@ peg::parser! {
         /// An assert.
         pub rule get_model() -> PRes<ast::script::GetModel>
         =
-            start:position!() token:$("get_model") "!" end:position!() _ "(" _ ")" {
+            start:position!() token:$("get_model") "!"? end:position!() _ "(" _ ")" {
                 Ok(ast::script::GetModel::new((start, end), token))
             }
             /
-            start:position!() token:$("get_model") "!" end:position!() _ "{" _ "}" {
+            start:position!() token:$("get_model") "!"? end:position!() _ "{" _ "}" {
                 Ok(ast::script::GetModel::new((start, end), token))
             }
 
         /// An assert.
         pub rule get_values() -> PRes<ast::script::GetValues<ast::Expr<'input>>>
         =
-            start:position!() token:$("get_values"/"eval") "!" end:position!() _ "("
+            start:position!() token:$("get_value" "s"?/"eval") "!"? end:position!() _ "("
                 _ exprs:(_ expr:hsmt_expr_with_repr() _ { expr })++"," _ ","?
             _ ")" {
                 Ok(ast::script::GetValues::new((start, end), token, exprs))
             }
             /
-            start:position!() token:$("get_values"/"eval") "!" end:position!() _ "{"
+            start:position!() token:$("get_values"/"eval") "!"? end:position!() _ "{"
                 _ exprs:(_ expr:hsmt_expr_with_repr() _ { expr })++"," _ ","?
             _ "}" {
                 Ok(ast::script::GetValues::new((start, end), token, exprs))
@@ -1065,11 +1065,11 @@ peg::parser! {
         /// An assert.
         pub rule reset() -> PRes<ast::script::Reset>
         =
-            start:position!() "reset!" end:position!() _ "(" _ ")" {
+            start:position!() "reset" "!"? end:position!() _ "(" _ ")" {
                 Ok(ast::script::Reset::new((start, end)))
             }
             /
-            start:position!() "reset!" end:position!() _ "{" _ "}" {
+            start:position!() "reset" "!"? end:position!() _ "{" _ "}" {
                 Ok(ast::script::Reset::new((start, end)))
             }
 
@@ -1077,7 +1077,7 @@ peg::parser! {
         pub rule echo() -> PRes<ast::script::Echo>
         =
             start:position!()
-                token:$("echo"/"println") "!"
+                token:$("echo"/"println") "!"?
             end:position!() _ "{"
                 _ msg:dbl_quoted()? _
             "}" {
@@ -1085,7 +1085,7 @@ peg::parser! {
             }
             /
             start:position!()
-                token:$("echo"/"println") "!"
+                token:$("echo"/"println") "!"?
             end:position!() _ "("
                 _ msg:dbl_quoted()? _
             ")" {

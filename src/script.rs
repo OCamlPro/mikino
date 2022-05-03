@@ -131,7 +131,9 @@ impl Step {
                     "".into()
                 } else {
                     let (_, line, _, _, _) = msg.span.pretty_of(txt);
-                    format!("{}// {}", pos(&msg.token, line), msg.msg,)
+                    let pretty_msg = style.pretty_md(&msg.msg, |s| style.gray(s));
+                    let cmt = style.gray(&format!("// {}", pretty_msg));
+                    format!("{}{}", pos(&msg.token, line), cmt)
                 }
             }
             Self::Model { span, token, model } => {

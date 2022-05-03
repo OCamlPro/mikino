@@ -2,6 +2,16 @@
 //!
 //! An hsmt script is a Rust-flavored syntax for (a subset of) [SMT-LIB 2][smtlib]. Such scripts
 //! allow to perform *satisfiability checks* on formulas; this is done with three basic commands.
+//! 
+//! All commands can be written function-style `command(args)` or block-style `command { args }`.
+//! Some commands also allow `command!(args)` and `command! { args }` such as `check_sat!()`,
+//! `get_model!()`, `println!(...)`... and all commands that produce an output or exit the script
+//! (including `panic!("message")`).
+//! 
+//! The script below showcases all commands available. Note that hsmt scripts, unlike SMT-LIB 2
+//! scripts, can branch using if-then-else(-otherwise). Conditions in branchings can only be
+//! check-sat results. Also unlike SMT-LIB 2, hsmt scripts let you bind (name) check-sat results
+//! in a (meta-)variable usable in branchings.
 //!
 //! [smtlib]: https://smtlib.cs.uiowa.edu/language.shtml
 //! (SMT-LIB's official website)
@@ -62,12 +72,12 @@ check_sat!()
 /// can communicate this result explicitly.
 if check_sat!() {
 	// sat case
-	echo!("`next_cnt` can be strictly negative 😿")
+	echo!("`next_cnt` can be *strictly* negative 😿")
 	// produce a model
 	get_model!()
 } else {
 	// unsat case
-	echo!("`next_cnt` can only be positive or zero 😸")
+	echo!("`next_cnt` can only be **positive or zero** 😸")
 } otherwise {
 	// this *optional* `otherwise` branch triggers when the check sat returns `unknown` or
 	// `timeout`. Here, we decide to *panic* with a message, which ends the script with an error.
@@ -89,8 +99,7 @@ if is_sat {
 // No `otherwise` branch, will panic if the check sat was inconclusive.
 
 
-
-echo!("resetting solver")
+echo!("**reset**ting solver")
 reset!()
 
 // This just echoes a newline.
@@ -99,11 +108,11 @@ echo!("nothing declared or asserted at this point")
 
 /// Nothing there, should be sat.
 if check_sat!() {
-	echo!("of course it's sat")
+	echo!("*of course* it's **sat**")
 } else {
-	panic!("no way this is unsat")
+	panic!("no way this is **unsat**")
 } otherwise {
-	echo!("epic fail, this was so easy")
+	echo!("epic fail, this check was so easy")
 	/// We can exit with a unix-style signed integer exit code.
 	exit!(2)
 }
@@ -136,10 +145,28 @@ let not_strictly_positive = check_sat!();
 
 /// Let's take a look.
 if not_strictly_positive {
-	echo!("yeah, `next_cnt` can actually be not strictly positive if `reset`:")
+	echo!("yeah, `next_cnt` can actually be not **strictly** positive if `reset`:")
 	get_model!()
 } else {
 	panic!("unreachable")
+}
+
+
+/// Let's get some values.
+eval! {
+	cnt,
+	cnt + 2,
+	cnt ≥ 0,
+	if ¬reset {
+		11
+	} else {
+		7 * (cnt + next_cnt)
+	},
+}
+
+/// You can also use `get_values` or `get_value` for that.
+get_values! {
+	cnt * (next_cnt + 7),
 }
 
 /// Let's force `reset` to be false.
