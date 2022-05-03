@@ -3,8 +3,31 @@
 /// Imports mikino's prelude.
 #[macro_export]
 macro_rules! prelude {
-    {} => { use $crate::prelude::*; };
+    { $($stuff:tt)* } => { use $crate::prelude::{*, $($stuff)*}; };
     { pub } => { pub use $crate::prelude::*; };
+}
+
+/// Converts a [`crate::prelude::Res`] in a [`crate::prelude::PRes`].
+#[macro_export]
+macro_rules! try_to_pres {
+    (
+        $e:expr =>
+            in $txt:expr,
+            at $span:expr,
+            with $($fmt:tt)*
+    ) => (
+        match $e {
+            Ok(res) => res,
+            Err(e) => return Err(
+                PError::new(
+                    format!($($fmt)*),
+                    $span,
+                )
+                .into_error($txt)
+                .chain_err(|| e)
+            ),
+        }
+    );
 }
 
 /// Convenience macro, provides a DSL for writing expressions.

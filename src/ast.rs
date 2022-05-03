@@ -1,159 +1,14 @@
-//! AST.
+//! AST structures for expressions and scripts.
 
 crate::prelude!();
 
-use expr::*;
-
-/// Parse error.
-#[derive(Debug)]
-pub struct PError {
-    /// Span where the error happened.
-    pub span: Span,
-    /// Actual error.
-    pub error: ErrorChain,
-}
-impl fmt::Display for PError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            fmt,
-            "[{}, {}] {}",
-            self.span.start, self.span.end, self.error.source,
-        )
-    }
-}
-impl PError {
-    /// Constructor.
-    pub fn new(error: impl Into<ErrorChain>, span: impl Into<Span>) -> Self {
-        let error = error.into();
-        let span = span.into();
-        PError { span, error }
-    }
-
-    /// Chains an error.
-    pub fn chain_err<E>(mut self, err: impl FnOnce() -> E) -> Self
-    where
-        Error: From<E>,
-    {
-        self.error = self.error.chain_err(err);
-        self
-    }
-}
-
-/// Parse result.
-pub type PRes<T> = Result<T, PError>;
-
-/// A span in the input text.
-#[readonly::make]
-#[derive(Debug, Clone, Copy)]
-pub struct Span {
-    /// Span's start (inclusive).
-    pub start: usize,
-    /// Span's end (exclusive).
-    pub end: usize,
-}
-impl Span {
-    /// Constructor.
-    pub fn new(start: usize, end: usize) -> Self {
-        debug_assert!(start <= end);
-        Span { start, end }
-    }
-    /// Merges two spans, `self`'s start and `other`'s end.
-    ///
-    /// - illegal if `self.start > other.end`.
-    pub fn merge(self, other: Self) -> Self {
-        (self.start, other.end).into()
-    }
-
-    /// Extracts the relevant line of the input, and the previous/next line if any.
-    pub fn pretty_of(self, text: &str) -> (Option<String>, usize, usize, String, Option<String>) {
-        if text.is_empty() {
-            assert_eq!(self.start, 0);
-            assert_eq!(self.end, 0);
-            return (None, 0, 0, "<EOI>".into(), None);
-        }
-        let mut lines = text.lines().enumerate();
-
-        let mut count = self.start;
-        let mut prev_line = None;
-
-        while let Some((row, line)) = lines.next() {
-            if line.len() >= count {
-                let (line, next) = {
-                    let next = lines.next().map(|(_, s)| s.to_string());
-                    if next.is_none() {
-                        (format!("{}{}", line, "<EOI>"), next)
-                    } else {
-                        (line.into(), next)
-                    }
-                };
-                return (prev_line.map(String::from), row, count, line, next);
-            }
-
-            count -= line.len() + 1;
-            prev_line = Some(line);
-        }
-
-        panic!(
-            "illegal offset {} on text of length {}",
-            self.start,
-            text.len()
-        );
-    }
-}
-impl From<(usize, usize)> for Span {
-    fn from((start, end): (usize, usize)) -> Self {
-        Self::new(start, end)
-    }
-}
-
-/// Wraps something with a span.
-#[derive(Debug, Clone, Copy)]
-pub struct Spn<T> {
-    /// Value wrapped.
-    pub inner: T,
-    /// Span.
-    pub span: Span,
-}
-impl<T> Spn<T> {
-    /// Constructor.
-    pub fn new(inner: T, span: impl Into<Span>) -> Self {
-        let span = span.into();
-        Self { inner, span }
-    }
-
-    /// Applies an operation to the inner value.
-    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Spn<U> {
-        Spn {
-            inner: f(self.inner),
-            span: self.span,
-        }
-    }
-
-    /// Applies an operation yielding a result to the inner value.
-    pub fn res_map<U>(
-        self,
-        mut f: impl FnMut(T) -> Result<U, &'static str>,
-    ) -> Result<Spn<U>, &'static str> {
-        let inner = f(self.inner)?;
-        Ok(Spn::new(inner, self.span))
-    }
-
-    /// Unwraps `self`'s and `other`'s inner values and merges their spans.
-    pub fn unwrap_merge<U>(self, other: Spn<U>) -> (T, U, Span) {
-        (self.inner, other.inner, self.span.merge(other.span))
-    }
-}
-impl<T> Deref for Spn<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.inner
-    }
-}
+pub mod script;
 
 /// AST for the term structure.
-pub enum Ast<'txt> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expr<'txt> {
     /// Spanned constant.
-    Cst(Spn<Cst>),
+    Cst(Spn<expr::Cst>),
     /// Variable, with a *pre* or *next* optional modifier.
     Var {
         /// Spanned identifier.
@@ -164,17 +19,17 @@ pub enum Ast<'txt> {
     /// Operator application.
     App {
         /// Spanned operator.
-        op: Spn<Op>,
+        op: Spn<expr::Op>,
         /// Arguments.
-        args: Vec<Ast<'txt>>,
+        args: Vec<Expr<'txt>>,
         /// True if the operator application is closed, not used ATM.
         closed: bool,
     },
 }
 
-impl<'txt> Ast<'txt> {
+impl<'txt> Expr<'txt> {
     /// Constant constructor.
-    pub fn cst(cst: Spn<Cst>) -> Self {
+    pub fn cst(cst: Spn<expr::Cst>) -> Self {
         Self::Cst(cst)
     }
     /// Variable constructor.
@@ -196,7 +51,7 @@ impl<'txt> Ast<'txt> {
     }
 
     /// Binary operator application.
-    pub fn binapp(op: Spn<Op>, lft: Self, rgt: Self) -> Self {
+    pub fn binapp(op: Spn<expr::Op>, lft: Self, rgt: Self) -> Self {
         Self::App {
             op,
             args: vec![lft, rgt],
@@ -205,7 +60,7 @@ impl<'txt> Ast<'txt> {
     }
 
     /// Unary operator application.
-    pub fn unapp(op: Spn<Op>, arg: Self) -> Self {
+    pub fn unapp(op: Spn<expr::Op>, arg: Self) -> Self {
         Self::App {
             op,
             args: vec![arg],
@@ -214,7 +69,7 @@ impl<'txt> Ast<'txt> {
     }
 
     /// N-ary operator application.
-    pub fn app(op: Spn<Op>, args: Vec<Self>) -> Self {
+    pub fn app(op: Spn<expr::Op>, args: Vec<Self>) -> Self {
         Self::App {
             op,
             args,
@@ -225,7 +80,7 @@ impl<'txt> Ast<'txt> {
     /// True if `self` is an if-then-else application.
     pub fn is_ite(&self) -> bool {
         match self {
-            Self::App { op, .. } if **op == Op::Ite => true,
+            Self::App { op, .. } if **op == expr::Op::Ite => true,
             _ => false,
         }
     }
@@ -239,7 +94,7 @@ impl<'txt> Ast<'txt> {
     }
 
     /// Turns itself into an expression from some declarations.
-    pub fn to_sexpr(self, decls: &trans::Decls) -> PRes<SExpr> {
+    pub fn to_sexpr(self, decls: &trans::Decls) -> PRes<expr::SExpr> {
         self.inner_to_expr(|var, next_opt| {
             let svar = if next_opt.is_some() {
                 decls.get_next_var(var.inner)
@@ -248,14 +103,14 @@ impl<'txt> Ast<'txt> {
             }
             .ok_or_else(|| PError::new(format!("unknown variable `{}`", var.inner), var.span))?;
             Ok(Spn::new(
-                SExpr::new_var(svar),
+                expr::SExpr::new_var(svar),
                 var.span.merge(next_opt.unwrap_or(var.span)),
             ))
         })
     }
 
     /// Turns itself into a stateless expression from some declarations.
-    pub fn to_expr(self, decls: &trans::Decls) -> PRes<Expr> {
+    pub fn to_expr(self, decls: &trans::Decls) -> PRes<expr::Expr> {
         self.inner_to_expr(|var, next_opt| {
             if let Some(span) = next_opt {
                 return Err(PError::new("illegal *next* modifier", span));
@@ -264,7 +119,7 @@ impl<'txt> Ast<'txt> {
                 PError::new(format!("unknown variable `{}`", var.inner), var.span)
             })?;
             Ok(Spn::new(
-                Expr::new_var(svar),
+                expr::Expr::new_var(svar),
                 var.span.merge(next_opt.unwrap_or(var.span)),
             ))
         })
@@ -275,16 +130,16 @@ impl<'txt> Ast<'txt> {
     /// - `handle_var` turns variables into actual expression variables.
     pub fn inner_to_expr<V: HasTyp>(
         self,
-        mut handle_var: impl FnMut(Spn<&'txt str>, Option<Span>) -> PRes<Spn<PExpr<V>>>,
-    ) -> PRes<PExpr<V>> {
-        let mut stack: Vec<(Spn<Op>, Vec<PExpr<V>>, _, bool)> = Vec::with_capacity(17);
+        mut handle_var: impl FnMut(Spn<&'txt str>, Option<Span>) -> PRes<Spn<expr::PExpr<V>>>,
+    ) -> PRes<expr::PExpr<V>> {
+        let mut stack: Vec<(Spn<expr::Op>, Vec<expr::PExpr<V>>, _, bool)> = Vec::with_capacity(17);
         let mut current = self;
 
         'go_down: loop {
-            let mut res: Spn<PExpr<V>> = match current {
-                Ast::Cst(cst) => cst.map(PExpr::new_cst),
-                Ast::Var { ident, pon } => handle_var(ident, pon)?,
-                Ast::App { op, args, closed } => {
+            let mut res: Spn<expr::PExpr<V>> = match current {
+                Expr::Cst(cst) => cst.map(expr::PExpr::new_cst),
+                Expr::Var { ident, pon } => handle_var(ident, pon)?,
+                Expr::App { op, args, closed } => {
                     let mut args = args.into_iter();
                     if let Some(next) = args.next() {
                         current = next;
@@ -312,7 +167,7 @@ impl<'txt> Ast<'txt> {
                     }
                     args.push(res.inner);
                     let expr =
-                        PExpr::new_op(op.inner, args).map_err(|e| PError::new(e, op.span))?;
+                        expr::PExpr::new_op(op.inner, args).map_err(|e| PError::new(e, op.span))?;
                     res = Spn::new(expr, op.span);
                     continue 'go_up;
                 }
@@ -323,7 +178,7 @@ impl<'txt> Ast<'txt> {
     }
 }
 
-impl<'txt> fmt::Display for Ast<'txt> {
+impl<'txt> fmt::Display for Expr<'txt> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cst(cst) => cst.fmt(fmt),
@@ -338,7 +193,7 @@ impl<'txt> fmt::Display for Ast<'txt> {
                 op,
                 ref args,
                 closed: _,
-            } if *op == Op::Ite => {
+            } if *op == expr::Op::Ite => {
                 assert_eq!(args.len(), 3);
 
                 write!(fmt, "if {} {{ {} }} else ", args[0], args[1])?;

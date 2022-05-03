@@ -3,8 +3,6 @@
 crate::prelude!();
 
 use expr::{Cst, Typ, Var};
-use parse::Parser;
-use rsmt2::{parse::SmtParser as RSmtParser, SmtRes, Solver as SmtSolver};
 
 /// A counterexample.
 #[derive(Debug, Clone)]
@@ -60,7 +58,7 @@ impl Cex {
     ///
     /// Uses `get_model` to retrieve the counterexample. The solver must have answered `sat` to a PO
     /// falsification query right before it is passed to this function.
-    pub fn populate(&mut self, solver: &mut Solver) -> Res<()> {
+    pub fn populate(&mut self, solver: &mut SFSolver) -> Res<()> {
         let model = solver.get_model().chain_err(|| "while retrieving cex")?;
         for ((var_id, step), args, typ, cst) in model {
             match (cst, step) {
@@ -128,7 +126,7 @@ impl<'sys> Cexs<'sys> {
     /// # Errors
     ///
     /// - when a counterexample for `po` is already registered.
-    pub fn insert_falsification(&mut self, po: &'sys String, solver: &mut Solver) -> Res<()> {
+    pub fn insert_falsification(&mut self, po: &'sys String, solver: &mut SFSolver) -> Res<()> {
         let mut cex = Cex::new();
         cex.populate(solver)?;
         let prev = self.insert(po, cex);
@@ -147,8 +145,49 @@ impl<'sys> Cexs<'sys> {
     }
 }
 
-/// Type alias for rsmt2's solver equipped with our parser.
-pub type Solver = SmtSolver<SmtParser>;
+/// Wrapper for rsmt2's solver equipped with our parser.
+pub struct Solver {
+    solver: SmtSolver<SmtParser>,
+}
+impl Solver {
+    /// Constructor.
+    pub fn new(z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
+        let z3_cmd = z3_cmd.as_ref();
+        let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
+        let z3_cmd = split_cmd
+            .next()
+            .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
+            .trim();
+        let mut conf = SmtConf::z3(z3_cmd);
+        conf.check_success();
+
+        for opt in split_cmd {
+            let opt = opt.trim();
+            if !opt.is_empty() {
+                conf.option(opt);
+            }
+        }
+
+        let mut solver = conf
+            .spawn(check::cexs::SmtParser)
+            .chain_err(|| "while spawning z3 solver")?;
+        if let Some(path) = tee {
+            solver.path_tee(path.as_ref())?
+        }
+        Ok(Self { solver })
+    }
+}
+impl Deref for Solver {
+    type Target = SmtSolver<SmtParser>;
+    fn deref(&self) -> &Self::Target {
+        &self.solver
+    }
+}
+impl DerefMut for Solver {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.solver
+    }
+}
 
 /// SMT-LIB parser for expressions, idents, types...
 #[derive(Debug, Clone, Copy)]
@@ -193,7 +232,7 @@ impl<'a, Br: std::io::BufRead>
         _: &Typ,
     ) -> SmtRes<Either<Cst, String>> {
         let sexpr = input.get_sexpr()?;
-        let mut parser = Parser::new(sexpr);
+        let mut parser = parse::Parser::new(sexpr);
         if let Ok(Some(cst)) = parser.try_cst() {
             Ok(Either::Left(cst))
         } else {
