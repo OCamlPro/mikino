@@ -595,13 +595,13 @@ peg::parser! {
             }
             --
             lft:(@) _ s:position!() (
-                "∨" / "⋁" / "||" / "and"
+                "∨" / "⋁" / "||" / "or"
              ) e:position!() _ rgt:@ {
                 ast::Expr::binapp(Spn::new(Op::Or, (s, e)), lft, rgt)
             }
             --
             lft:(@) _ s:position!() (
-                "∧" / "⋀" / "&&" / "or"
+                "∧" / "⋀" / "&&" / "and"
             ) e:position!() _ rgt:@ {
                 ast::Expr::binapp(Spn::new(Op::And, (s, e)), lft, rgt)
             }
