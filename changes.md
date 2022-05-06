@@ -1,3 +1,8 @@
+# v0.9.1
+
+- added a function generating `rsmt2::SmtConf` from a string Z3 CLI invokation with arguments
+- fixed parser for `and` and `or` operators
+
 # v0.9.0
 
 - added a notion of script

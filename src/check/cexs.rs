@@ -151,23 +151,7 @@ pub struct Solver {
 }
 impl Solver {
     /// Constructor.
-    pub fn new(z3_cmd: impl AsRef<str>, tee: Option<impl AsRef<str>>) -> Res<Self> {
-        let z3_cmd = z3_cmd.as_ref();
-        let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
-        let z3_cmd = split_cmd
-            .next()
-            .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
-            .trim();
-        let mut conf = SmtConf::z3(z3_cmd);
-        conf.check_success();
-
-        for opt in split_cmd {
-            let opt = opt.trim();
-            if !opt.is_empty() {
-                conf.option(opt);
-            }
-        }
-
+    pub fn new(conf: SmtConf, tee: Option<impl AsRef<str>>) -> Res<Self> {
         let mut solver = conf
             .spawn(check::cexs::SmtParser)
             .chain_err(|| "while spawning z3 solver")?;

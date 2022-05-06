@@ -26,6 +26,27 @@ pub use crate::{
     trans,
 };
 
+/// Generates an [`SmtConf`] from a Z3 command with arguments.
+pub fn z3_cmd_to_conf(z3_cmd: impl AsRef<str>) -> Res<SmtConf> {
+    let z3_cmd = z3_cmd.as_ref();
+    let mut split_cmd = z3_cmd.split(|c: char| c.is_whitespace());
+    let z3_cmd = split_cmd
+        .next()
+        .ok_or_else(|| format!("illegal Z3 command `{}`", z3_cmd))?
+        .trim();
+    let mut conf = SmtConf::z3(z3_cmd);
+    conf.check_success();
+
+    for opt in split_cmd {
+        let opt = opt.trim();
+        if !opt.is_empty() {
+            conf.option(opt);
+        }
+    }
+
+    Ok(conf)
+}
+
 /// Step index.
 ///
 /// In the context of a stateful expression, this is the index of the *current step*. If this index
